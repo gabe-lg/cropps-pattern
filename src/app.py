@@ -1,10 +1,10 @@
-import threading
-from argparse import ArgumentError
-
 import cv2
 import numpy as np
+import threading
 import tkinter as tk
 import src.searcher
+import src.stack
+from argparse import ArgumentError
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
@@ -33,9 +33,14 @@ class ImageViewer(tk.Tk):
         self.button_frame = tk.Frame(self)
         self.button_frame.pack(fill='x', padx=5, pady=5)
 
-        # Create buttons
+        # buttons
+        self.undo_button = tk.Button(self.button_frame, text="Undo",
+                                     command=self.undo)
+        self.undo_button.pack(side='left', padx=5)
+        self.undo_button.configure(state='disabled')
+
         self.open_button = tk.Button(self.button_frame, text="Open",
-                                     command=self.open_image)
+                                     command=self.open)
         self.open_button.pack(side='left', padx=5)
 
         self.save_button = tk.Button(self.button_frame, text="Save",
@@ -59,6 +64,7 @@ class ImageViewer(tk.Tk):
         self.searching = 0
         self.lock = threading.Lock()
         self.searcher = src.searcher.Searcher()
+        self.search_stack = src.stack.SearchStack()
 
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
@@ -69,7 +75,33 @@ class ImageViewer(tk.Tk):
         self.geometry(
             f"{window_width}x{window_height}+{position_x}+{position_y}")
 
-    def open_image(self):
+    def undo(self):
+        if self.searching:
+            messagebox.showerror("Cannot undo",
+                                 "Cancel or wait for the ongoing search to "
+                                 "finish before undoing.")
+            return
+
+        if self.search_stack:
+            result = self.search_stack.pop()
+            if result.is_line:
+                # If we're removing a line, also remove the last point
+                if self.search_stack:
+                    self.search_stack.pop()
+
+            self.searcher.clicks.pop(-1)
+
+            if last := self.search_stack.peek():
+                self._draw(last.data)
+            else:
+                self.clear()
+
+    def open(self):
+        if self.save_button['state'] == 'normal':
+            if not messagebox.askokcancel("Open file",
+                                          "Any edits to the current image "
+                                          "will be lost. Proceed?"): return
+
         file_path = filedialog.askopenfilename(
             filetypes=[
                 ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp *.tif *.tiff"),
@@ -78,6 +110,9 @@ class ImageViewer(tk.Tk):
         )
 
         if file_path:
+            self.cancel_search()
+            self.clear()
+
             # Open and display the image
             image = Image.open(file_path)
 
@@ -94,16 +129,12 @@ class ImageViewer(tk.Tk):
             self.clear_button.configure(state='disabled')
             self.save_button.configure(state='disabled')
 
-            data = np.array(image)
-            print(data)
-            print("Shape:", data.shape)
-
     def save(self):
         if not self.curr_image: return
 
         if self.searching:
             messagebox.showwarning("Searches ongoing",
-                                   "One or more searches are ongoing.\n"
+                                   "Searches are ongoing.\n"
                                    "Wait or cancel them before saving.")
             return
 
@@ -141,9 +172,13 @@ class ImageViewer(tk.Tk):
         _, photo = self.orig_image
         self.image_label.configure(image=photo)
         self.curr_image = self.orig_image
-        self.cancel_search()
+        if self.searching: self.cancel_search()
+        self.searcher.clicks.clear()
+        self.search_stack.clear()  # Clear the stack
         self.clear_button.configure(state='disabled')
         self.save_button.configure(state='disabled')
+        self.undo_button.configure(state='disabled')
+        print("Cleared annotations")
 
     def cancel_search(self):
         with self.lock:
@@ -151,9 +186,23 @@ class ImageViewer(tk.Tk):
             self.searcher.canceled = True
             self.cancel_search_button.configure(state='disabled')
 
+        # Find the last line entry and restore to that state
+        while self.search_stack:
+            last = self.search_stack.peek()
+            if not last or last.is_line:
+                break
+            self.search_stack.pop()
+            if self.search_stack:  # Remove the corresponding point
+                self.search_stack.pop()
+
+        if last := self.search_stack.peek():
+            self._draw(last.data)
+        else:
+            self.clear()
+
     def on_click(self, event):
         try:
-            x, y, image = self._get_coor_on_clicked(event)
+            x, y, image = self._get_coor(event)
         except ArgumentError:
             return
 
@@ -185,7 +234,7 @@ class ImageViewer(tk.Tk):
         self.image_label.configure(image=photo)
         self.curr_image = image, photo  # Keep a reference
 
-    def _get_coor_on_clicked(self, event):
+    def _get_coor(self, event):
         try:
             image, _ = self.curr_image
             orig_height, orig_width = np.array(image).shape[:2]
