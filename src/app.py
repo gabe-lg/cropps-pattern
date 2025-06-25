@@ -20,16 +20,16 @@ class ImageViewer(tk.Tk):
         self.title("Image Viewer")
         self.resizable(False, False)
 
-        # Create main frame
+        # main frame
         self.main_frame = tk.Frame(self)
         self.main_frame.pack(expand=True, fill='both')
 
-        # Create image label
+        # image label
         self.image_label = tk.Label(self.main_frame)
         self.image_label.pack(expand=True, fill='both', padx=10, pady=10)
         self.image_label.bind('<Button-1>', self.on_click)
 
-        # Create button frame
+        # button frame
         self.button_frame = tk.Frame(self)
         self.button_frame.pack(fill='x', padx=5, pady=5)
 
@@ -159,30 +159,25 @@ class ImageViewer(tk.Tk):
 
         data = np.array(image)
 
-        # draw circle
-        self.searcher.add((x, y))
-        cv2.circle(data, (x, y), CIR_SIZE, (0, 0, 0), -1)
-        self._draw(data)
+        with self.lock:
+            self.searcher.add((x, y))
+            cv2.circle(data, (x, y), CIR_SIZE, (0, 0, 0), -1)
+            self.search_stack.push(src.stack.SearchResult([(x, y)], 0, data))
+            self._draw(data)
+            self.undo_button.configure(state='normal')
+            self.save_button.configure(state='normal')
+            self.clear_button.configure(state='normal')
+            print(f"Click detected at x={x}, y={y}")
 
-        # create thread to search for line
-        print(f"Click detected at x={x}, y={y}")
-        searcher_thread = threading.Thread(target=self._search,
-                                           args=(np.array(self.orig_image[0]),))
+            if len(self.searcher.clicks) > 1:
+                self.searching = 1
+                self.after_idle(
+                    lambda: self.cancel_search_button.configure(state='normal'))
 
-        self.cancel_search_button.configure(state='normal')
-        self.searching += 1
-        searcher_thread.start()
-
-        while searcher_thread.is_alive():
-            if not self.searching: break  # ignore search
-            self.update()
-            searcher_thread.join(0.1)
-
-        self.searching -= 1
-        self._check_searching()
-
-        self.clear_button.configure(state='normal')
-        self.save_button.configure(state='normal')
+                search_thread = threading.Thread(
+                    target=self._search, args=(np.array(self.orig_image[0]),))
+                search_thread.daemon = True
+                search_thread.start()
 
     def _draw(self, data):
         image = Image.fromarray(data)
@@ -221,15 +216,22 @@ class ImageViewer(tk.Tk):
         return x, y, image
 
     def _search(self, orig):
-        line = self.searcher.search(orig)
-
-        # draw line on screen
-        data = np.array(self.curr_image[0])
-        if line: cv2.polylines(
-            data, [np.array(line)], False, (0, 0, 0),
-            LINE_WIDTH)
-        self._check_searching()
-        self._draw(data)
+        try:
+            line = self.searcher.search(orig)
+            with self.lock:
+                if line and not self.searcher.canceled:
+                    data = np.array(self.curr_image[0])
+                    points = np.array(line)
+                    cv2.polylines(data, [points], False, (0, 0, 0), LINE_WIDTH)
+                    # Store result in stack
+                    self.after_idle(self.search_stack.push,
+                                    (src.stack.SearchResult(line, 1, data)))
+                    self.after_idle(self._draw, data)
+        finally:
+            with self.lock:
+                self.searching = 0
+                self.after_idle(lambda: self.cancel_search_button.configure(
+                    state='disabled'))
 
     def _check_searching(self):
         if not self.searching:
