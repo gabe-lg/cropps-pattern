@@ -1,4 +1,5 @@
 import numpy as np
+import heapq
 
 
 class Searcher:
@@ -30,6 +31,9 @@ class Searcher:
         # Store predecessors for path reconstruction
         predecessors = np.full((height, width, 2), -1, dtype=int)
 
+        # Priority queue [(distance, (y, x))]
+        pq = [(0, (orig[1], orig[0]))]
+
         def get_neighbors(y, x):
             # 8-directional movement
             for dy in [-1, 0, 1]:
@@ -40,24 +44,16 @@ class Searcher:
                     if 0 <= new_y < height and 0 <= new_x < width:
                         yield (new_y, new_x)
 
-        # Dijkstra's algorithm
-        while True:
+        # Dijkstra's algorithm with priority queue
+        while pq:
             if self.canceled:
                 print("Searcher: canceled")
                 return None
-            # Find unvisited node with minimum distance
-            min_dist = inf
-            current = None
 
-            dist_unvisited = np.ma.masked_array(distances, visited)
-            if np.all(dist_unvisited.mask):  # All nodes visited
-                break
+            current_dist, (current_y, current_x) = heapq.heappop(pq)
 
-            current_y, current_x = np.unravel_index(np.argmin(dist_unvisited),
-                                                    distances.shape)
-
-            if distances[current_y, current_x] == inf:
-                break
+            if visited[current_y, current_x]:
+                continue
 
             if current_y == dest[1] and current_x == dest[0]:
                 break
@@ -72,13 +68,13 @@ class Searcher:
                 # Use inverse brightness as weight (brighter pixels = shorter path)
                 weight = 1.0 / (data[
                                     neighbor_y, neighbor_x] + 1)  # Add 1 to avoid division by zero
-
-                new_dist = distances[current_y, current_x] + weight
+                new_dist = current_dist + weight
 
                 if new_dist < distances[neighbor_y, neighbor_x]:
                     distances[neighbor_y, neighbor_x] = new_dist
                     predecessors[neighbor_y, neighbor_x] = [current_y,
                                                             current_x]
+                    heapq.heappush(pq, (new_dist, (neighbor_y, neighbor_x)))
 
         # Reconstruct path
         path = []
