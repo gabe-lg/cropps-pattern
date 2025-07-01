@@ -5,12 +5,20 @@ import tkinter as tk
 import src.searcher
 import src.stack
 from argparse import ArgumentError
+from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
+from lib.point import Point, PointNode
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
 SIZE_RATIO = 0.75
 CIR_SIZE = 3
 LINE_WIDTH = 2
+
+
+class ImageNode(DoublyLinkedNode[ImageFile.ImageFile]): pass
+
+
+class ImageList(DoublyLinkedList[ImageNode]): pass
 
 
 class ImageViewer(tk.Tk):
@@ -59,12 +67,16 @@ class ImageViewer(tk.Tk):
         self.cancel_search_button.pack(side='left', padx=5)
         self.cancel_search_button.configure(state='disabled')
 
+        self.image_list = ImageList()
         self.curr_image = None
         self.orig_image = None
-        self.searching = 0
         self.lock = threading.Lock()
-        self.searcher = src.searcher.Searcher()
-        self.search_stack = src.stack.SearchStack()
+
+        self.searching = 0
+        self.searcher = src.searcher.Searcher(self.lock)
+        self.history = src.history.History()
+
+        self._config_button()
 
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
@@ -76,27 +88,23 @@ class ImageViewer(tk.Tk):
             f"{window_width}x{window_height}+{position_x}+{position_y}")
 
     def undo(self):
-        if self.searching:
-            messagebox.showerror("Cannot undo",
-                                 "Cancel or wait for the ongoing search to "
-                                 "finish before undoing.")
-            return
+        res = self.history.undo()
+        self.searcher.undo()
+        if self.history.is_init_state():
+            self.clear()
+        else:
+            self._draw(res.value.data)
+        self._config_button()
 
-        if self.search_stack:
-            result = self.search_stack.pop()
-            if result.is_line:
-                # If we're removing a line, also remove the last point
-                if self.search_stack:
-                    self.search_stack.pop()
+        return res
 
-            self.searcher.clicks.pop(-1)
+    def redo(self):
+        self.searcher.redo()
+        self._draw(self.history.redo().value.data)
+        self._config_button()
 
-            if last := self.search_stack.peek():
-                self._draw(last.data)
-            else:
-                self.clear()
-
-    def open(self):
+    def open(self, is_folder: bool):
+        """ :param is_folder: True iff the open folder button is clicked. """
         if self.save_button['state'] == 'normal':
             if not messagebox.askokcancel("Open file",
                                           "Any edits to the current image "
@@ -167,24 +175,22 @@ class ImageViewer(tk.Tk):
                 messagebox.showerror("Error", "An error occured while saving:"
                                               f"\n{str(e)}")
 
-    def clear(self):
+    def clear(self, is_button=False):
         if not self.orig_image: return
         _, photo = self.orig_image
         self.image_label.configure(image=photo)
         self.curr_image = self.orig_image
         if self.searching: self.cancel_search()
-        self.searcher.clicks.clear()
-        self.search_stack.clear()  # Clear the stack
-        self.clear_button.configure(state='disabled')
-        self.save_button.configure(state='disabled')
-        self.undo_button.configure(state='disabled')
+        self.searcher.clear(is_button)
+        self.history.undo_all(is_button)
+        self._config_button()
         print("Cleared annotations")
 
     def cancel_search(self):
         with self.lock:
             self.searching = 0
             self.searcher.canceled = True
-            self.cancel_search_button.configure(state='disabled')
+            self._config_button()
 
         # Find the last line entry and restore to that state
         while self.search_stack:
@@ -213,15 +219,28 @@ class ImageViewer(tk.Tk):
             cv2.circle(data, (x, y), CIR_SIZE, (0, 0, 0), -1)
             self.search_stack.push(src.stack.SearchResult([(x, y)], 0, data))
             self._draw(data)
+    def _config_button(self):
+        if self.history.curr_has_prev() and not self.searching:
             self.undo_button.configure(state='normal')
+        else:
+            self.undo_button.configure(state='disabled')
+
+        if self.history.curr_has_next() and not self.searching:
+            self.redo_button.configure(state='normal')
+        else:
+            self.redo_button.configure(state='disabled')
+
+        if self.history.is_init_state():
+            self.save_button.configure(state='disabled')
+            self.clear_button.configure(state='disabled')
+        else:
             self.save_button.configure(state='normal')
             self.clear_button.configure(state='normal')
-            print(f"Click detected at x={x}, y={y}")
 
-            if len(self.searcher.clicks) > 1:
-                self.searching = 1
-                self.after_idle(
-                    lambda: self.cancel_search_button.configure(state='normal'))
+        if self.searching:
+            self.cancel_search_button.configure(state='normal')
+        else:
+            self.cancel_search_button.configure(state='disabled')
 
                 search_thread = threading.Thread(
                     target=self._search, args=(np.array(self.orig_image[0]),))
@@ -264,23 +283,33 @@ class ImageViewer(tk.Tk):
 
         return x, y, image
 
-    def _search(self, orig):
+    def _search(self, orig, action, thread_count=1):
+        while thread_count < self.searching:
+            if self.searcher.canceled: return
+
         try:
-            line = self.searcher.search(orig)
+            visited = np.zeros(orig.shape[:2], dtype=bool)
+            line = self.searcher.search(visited, orig)
             with self.lock:
                 if line and not self.searcher.canceled:
-                    data = np.array(self.curr_image[0])
+                    data = self.history.peek().value.data
                     points = np.array(line)
                     cv2.polylines(data, [points], False, (0, 0, 0), LINE_WIDTH)
+
                     # Store result in stack
-                    self.after_idle(self.search_stack.push,
-                                    (src.stack.SearchResult(line, 1, data)))
+                    self.after_idle(
+                        lambda: setattr(action, 'child', src.history.ActionNode(
+                            src.history.Action(line, data))))
                     self.after_idle(self._draw, data)
         finally:
             with self.lock:
                 self.searching = 0
                 self.after_idle(lambda: self.cancel_search_button.configure(
                     state='disabled'))
+                self._config_button()
+                self.searching -= 1
+                self._config_button()
+
 
     def _check_searching(self):
         if not self.searching:

@@ -1,14 +1,65 @@
-import numpy as np
+import cv2
 import heapq
+import numpy as np
+from matplotlib import pyplot as plt
+
+from lib.doubly_linked_list import DoublyLinkedList, T
+from lib.point import LineNode, Point, PointNode
+from typing import List, Optional, Tuple
+
+
+class PointStack(DoublyLinkedList[PointNode]): pass
+
+
+class PolyLineStack(DoublyLinkedList[LineNode]): pass
 
 
 class Searcher:
-    def __init__(self):
-        self.canceled = False
-        self.clicks = []
+    """
+    Stores points using a stack, then searches for the brightest and shortest
+    path between the last two points.
 
-    def add(self, click):
-        self.clicks.append(click)
+    :ivar canceled: ``True`` iff user terminates search
+    :ivar clicks: A stack of points representing the position clicked by user
+    :ivar undid_clicks: A stack of points undone by user
+    :ivar all_lines: A stack of lines returned by searcher
+    :ivar undid_lines: A stack of lines undone by user
+    """
+
+    def __init__(self, lock):
+        self.canceled = False
+        self.clicks = PointStack()
+        self.all_lines = PolyLineStack()
+        self._lock = lock
+        self._cleared_count = 0
+
+    def push(self, l: DoublyLinkedList[T], elem: T):
+        """
+        Pushes ``elem`` into ``l``.
+        :param l: A ``DoublyLinkedList``
+        :param elem: The element to be pushed
+        """
+        l.push(elem)
+        self._cleared_count = 0
+
+    def clear(self, is_button=False):
+        cleared_count = 0
+        while self.clicks.curr_at_init():
+            if is_button: cleared_count += 1
+            if self.clicks.peek().prev: self.undo()
+        self._cleared_count = cleared_count
+
+    def undo(self):
+        if self._cleared_count:
+            for _ in range(self._cleared_count): self.redo()
+            self._cleared_count = 0
+        else:
+            if self.all_lines.peek().prev: self.all_lines.prev()
+            self.clicks.prev()
+
+    def redo(self):
+        if self.clicks.peek().prev: self.all_lines.next()
+        self.clicks.next()
 
     def search(self, visited: np.ndarray, data: np.ndarray) \
             -> Optional[List[Tuple[int, int]]]:
@@ -40,11 +91,6 @@ class Searcher:
         height, width = data.shape
         steps = [Point(1, 0), Point(0, 1), Point(-1, 0), Point(0, -1)]
 
-        # Initialize distances and visited arrays
-        distances = np.full((height, width), inf)
-        distances[orig[1], orig[0]] = 0
-        visited = np.zeros((height, width), dtype=bool)
-        # Store predecessors for path reconstruction
         # init
         assert not visited.any()
         distances = np.full((height, width), float('inf'))
