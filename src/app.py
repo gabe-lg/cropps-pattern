@@ -290,7 +290,6 @@ class ImageViewer(tk.Tk):
     def next_image(self):
         self._draw(self.image_list.next().value)
 
-    def on_click(self, event):
     def first_image(self):
         self.image_list.init()
         self.next_image()
@@ -298,18 +297,34 @@ class ImageViewer(tk.Tk):
     def last_image(self):
         self._draw(self.image_list.last().value)
 
+    def on_click(self, event, is_temp=0):
         try:
             x, y, image = self._get_coor(event)
         except ArgumentError:
             return
 
         data = np.array(image)
+        print(f"Click detected at x={x}, y={y} with intensity "
+              f"{data[y, x]}")
 
         with self.lock:
-            self.searcher.add((x, y))
-            cv2.circle(data, (x, y), CIR_SIZE, (0, 0, 0), -1)
-            self.search_stack.push(src.stack.SearchResult([(x, y)], 0, data))
-            self._draw(data)
+            self.searcher.push(self.searcher.clicks, PointNode(Point(x, y)))
+            action = self.history.push(src.history.Action([(x, y)], data))
+            self.searching += 1 if not self.searcher.clicks.curr_at_first() else 0
+
+        # now do UI updates and start thread outside the lock
+        cv2.circle(data, (x, y), CIR_SIZE, (0, 0, 0), -1)
+        self._draw(data)
+        self._config_button()
+
+        if self.searching:
+            threading.Thread(
+                target=self._search,
+                args=(np.array(self.orig_image[0]), action),
+                daemon=True).start()
+
+        self.after_idle(self._plot_brightness, np.array(self.orig_image[0]))
+
     def _config_button(self):
         if self.history.curr_has_prev() and not self.searching:
             self.undo_button.configure(state='normal')
@@ -396,7 +411,17 @@ class ImageViewer(tk.Tk):
                 self.searching -= 1
                 self._config_button()
 
+    def _plot_brightness(self, data):
+        # Clear the frame if needed (optional)
+        for widget in self.brightness_graph_frame.winfo_children():
+            print("Graph: Destroying widget:", widget)
+            widget.destroy()
 
-    def _check_searching(self):
-        if not self.searching:
-            self.cancel_search_button.configure(state='disabled')
+        # Embed the plot into the tkinter frame
+        canvas = FigureCanvasTkAgg(
+            self.searcher.plot_brightness(data,
+            Point(self.graph_frame.winfo_width(),
+                  self.graph_frame.winfo_height())),
+            master=self.brightness_graph_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)

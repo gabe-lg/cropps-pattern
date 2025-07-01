@@ -137,3 +137,34 @@ class Searcher:
         self.all_lines.push(LineNode(path))
         visited.fill(False)
         return path
+
+    def reconstruct_line(self):
+        return [p for l in self.all_lines for p in l.value]
+
+    def plot_brightness(self, data: np.ndarray, shape: Point):
+        grayscale = np.mean(data, axis=2) if len(data.shape) == 3 else data
+
+        fig, ax = plt.subplots()
+
+        brightness_values = [grayscale[p.y, p.x] for p in self.reconstruct_line()]
+        ax.plot(range(len(brightness_values)), brightness_values)
+        ax.set_xlabel('Number of pixels from origin')
+        ax.set_ylabel('Brightness')
+        ax.set_title('Brightness Along Selected Line')
+        fig.tight_layout()
+
+        return fig
+
+    @staticmethod
+    def _calc_weight(x: float) -> int | float:
+        """
+        Calculates the edge weight based on pixel intensity.
+
+        Modifying this formula changes how much a pixel's intensity affects the
+        relative cost of traversal.
+        """
+        # I propose an exponential decay function with:
+        n0 = 2 ** 16
+        t_half = 16
+        # https://www.desmos.com/calculator/8zad7rj8md
+        return n0 * 2 ** (-x / t_half)
