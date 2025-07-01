@@ -1,14 +1,18 @@
 import cv2
 import numpy as np
+import os
 import threading
 import tkinter as tk
+
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+import src.history
 import src.searcher
-import src.stack
 from argparse import ArgumentError
 from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
 from lib.point import Point, PointNode
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageFile, ImageTk
 
 SIZE_RATIO = 0.75
 CIR_SIZE = 3
@@ -26,46 +30,100 @@ class ImageViewer(tk.Tk):
         super().__init__()
 
         self.title("Image Viewer")
-        self.resizable(False, False)
 
-        # main frame
-        self.main_frame = tk.Frame(self)
-        self.main_frame.pack(expand=True, fill='both')
+        # keyboard shortcuts
+        self.bind('<Left>', lambda _: self.prev_image())
+        self.bind('<Right>', lambda _: self.next_image())
+        self.bind('<Home>', lambda _: self.first_image())
+        self.bind('<End>', lambda _: self.last_image())
+
+        # paned window
+        self.main_pane = tk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self.main_pane.pack(fill=tk.BOTH, expand=True)
+
+        # image + arrows frame
+        self.content_frame = tk.Frame(self.main_pane, bg="lightgray")
+        self.main_pane.add(self.content_frame)
+
+        # graph frame
+        self.graph_frame = tk.Frame(self.main_pane, bg="white")
+        self.main_pane.add(self.graph_frame)
+
+        self.brightness_graph_frame = tk.Frame(self.graph_frame)
+        self.brightness_graph_frame.pack(fill='both',
+                                         expand=True,padx=20, pady=20)
+
+        self.main_pane.sash_place(0, int(self.winfo_width() * 0.7), 0)
+
+        # left button frame
+        self.left_button_frame = tk.Frame(self.content_frame, bd=2,
+                                          relief='groove')
+        self.left_button_frame.pack(side='left', anchor='center', padx=(0, 10))
+
+        # right button frame
+        self.right_button_frame = tk.Frame(self.content_frame, bd=2,
+                                           relief='groove')
+        self.right_button_frame.pack(
+            side='right', anchor='center', padx=(0, 10))
 
         # image label
-        self.image_label = tk.Label(self.main_frame)
+        self.image_label = tk.Label(self.content_frame)
         self.image_label.pack(expand=True, fill='both', padx=10, pady=10)
         self.image_label.bind('<Button-1>', self.on_click)
 
-        # button frame
+        # bottom button frame
         self.button_frame = tk.Frame(self)
         self.button_frame.pack(fill='x', padx=5, pady=5)
 
         # buttons
+        self.first_button = (tk.Button(self.left_button_frame, text="<<",
+                                       command=self.first_image))
+        self.first_button.pack(side='left', padx=5)
+
+        self.prev_button = (tk.Button(self.left_button_frame, text="<",
+                                      command=self.prev_image))
+
+        self.prev_button.pack(side='left', padx=5)
+
+        self.next_button = (tk.Button(self.right_button_frame, text=">",
+                                      command=self.next_image))
+        self.next_button.pack(side='left', padx=5)
+
+        self.last_button = (tk.Button(self.right_button_frame, text=">>",
+                                      command=self.last_image))
+        self.last_button.pack(side='left', padx=5)
+
+        ###
         self.undo_button = tk.Button(self.button_frame, text="Undo",
                                      command=self.undo)
         self.undo_button.pack(side='left', padx=5)
-        self.undo_button.configure(state='disabled')
 
-        self.open_button = tk.Button(self.button_frame, text="Open",
-                                     command=self.open)
+        self.redo_button = tk.Button(self.button_frame, text="Redo",
+                                     command=self.redo)
+        self.redo_button.pack(side='left', padx=5)
+
+        self.open_button = tk.Menubutton(self.button_frame, text="Open...")
+        self.open_menu = tk.Menu(self.open_button, tearoff=0)
+        self.open_button.config(menu=self.open_menu)
+        self.open_menu.add_command(
+            label="Open file", command=lambda: self.open(is_folder=False))
+        self.open_menu.add_command(
+            label="Open folder", command=lambda: self.open(is_folder=True))
         self.open_button.pack(side='left', padx=5)
 
         self.save_button = tk.Button(self.button_frame, text="Save",
                                      command=self.save)
         self.save_button.pack(side='left', padx=5)
-        self.save_button.configure(state='disabled')
 
-        self.clear_button = tk.Button(self.button_frame, text="Clear",
-                                      command=self.clear)
+        self.clear_button = (
+            tk.Button(self.button_frame, text="Clear",
+                      command=lambda: self.clear(is_button=True)))
         self.clear_button.pack(side='left', padx=5)
-        self.clear_button.configure(state='disabled')
 
         self.cancel_search_button = (
             tk.Button(self.button_frame, text="Cancel Search",
                       command=self.cancel_search))
         self.cancel_search_button.pack(side='left', padx=5)
-        self.cancel_search_button.configure(state='disabled')
 
         self.image_list = ImageList()
         self.curr_image = None
@@ -110,32 +168,58 @@ class ImageViewer(tk.Tk):
                                           "Any edits to the current image "
                                           "will be lost. Proceed?"): return
 
-        file_path = filedialog.askopenfilename(
-            filetypes=[
-                ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp *.tif *.tiff"),
-                ("All files", "*.*")
-            ]
-        )
+        file_path = (filedialog.askdirectory() if is_folder else
+                     filedialog.askopenfilename(
+                         filetypes=[
+                             ("Image files",
+                              "*.png *.jpg *.jpeg *.gif *.bmp *.tif *.tiff"),
+                             ("All files", "*.*")
+                         ]
+                     ))
 
-        if file_path:
-            self.cancel_search()
-            self.clear()
+        if not file_path: return
 
-            # Open and display the image
-            image = Image.open(file_path)
+        self.cancel_search()
+        self.clear()
+        self.history.clear()
+        self.image_list.clear()
 
-            # Resize image if it's too large (maintaining aspect ratio)
-            display_size = (800, 600)  # Maximum display size
-            image.thumbnail(display_size, Image.Resampling.LANCZOS)
+        # push images to list
+        if is_folder:
+            self.image_list.push_all(
+                [f[2] for f in sorted(
+                    [(os.path.getmtime(os.path.join(file_path, f)), f,
+                      ImageNode(Image.open(os.path.join(file_path, f))))
+                     for f in os.listdir(file_path)
+                     if f.lower().endswith(
+                        (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif",
+                         ".tiff"))])
+                 ])
+        else:
+            self.image_list.push(ImageNode(Image.open(file_path)))
 
-            # Update the label with new image
-            photo = ImageTk.PhotoImage(image)
-            self.image_label.configure(image=photo)
-            self.curr_image = image, photo  # Keep a reference
-            self.orig_image = image, photo
-            self.cancel_search()
-            self.clear_button.configure(state='disabled')
-            self.save_button.configure(state='disabled')
+        # Open and display the image
+        self.image_list.init()  # navigate to the start of the list
+        try:
+            image = self.image_list.next().value
+        except IndexError:
+            self.image_label.configure(image=tk.PhotoImage())
+            messagebox.showerror("Open folder",
+                                 "This folder does not contain any image files.")
+            return
+
+        # Resize image if it's too large (maintaining aspect ratio)
+        display_size = (800, 600)  # Maximum display size
+        image.thumbnail(display_size, Image.Resampling.LANCZOS)
+
+        # Update the label with new image
+        photo = ImageTk.PhotoImage(image)
+        self.image_label.configure(image=photo)
+        self.curr_image = image, photo  # Keep a reference
+        self.orig_image = image, photo
+        self.history.init(np.array(image))
+        self.cancel_search()
+        self._config_button()
 
     def save(self):
         if not self.curr_image: return
@@ -193,20 +277,27 @@ class ImageViewer(tk.Tk):
             self._config_button()
 
         # Find the last line entry and restore to that state
-        while self.search_stack:
-            last = self.search_stack.peek()
-            if not last or last.is_line:
-                break
-            self.search_stack.pop()
-            if self.search_stack:  # Remove the corresponding point
-                self.search_stack.pop()
+        # while self.search_stack:
+        #     last = self.search_stack.peek()
+        #     if not last or last.is_line: break
+        #
+        #     # if it is not a line, undo
+        #     self._undo()
 
-        if last := self.search_stack.peek():
-            self._draw(last.data)
-        else:
-            self.clear()
+    def prev_image(self):
+        self._draw(self.image_list.prev().value)
+
+    def next_image(self):
+        self._draw(self.image_list.next().value)
 
     def on_click(self, event):
+    def first_image(self):
+        self.image_list.init()
+        self.next_image()
+
+    def last_image(self):
+        self._draw(self.image_list.last().value)
+
         try:
             x, y, image = self._get_coor(event)
         except ArgumentError:
@@ -242,13 +333,11 @@ class ImageViewer(tk.Tk):
         else:
             self.cancel_search_button.configure(state='disabled')
 
-                search_thread = threading.Thread(
-                    target=self._search, args=(np.array(self.orig_image[0]),))
-                search_thread.daemon = True
-                search_thread.start()
+    def _draw(self, data, invis=0):
+        if not isinstance(data, (np.ndarray, ImageFile.ImageFile)):
+            raise TypeError()
 
-    def _draw(self, data):
-        image = Image.fromarray(data)
+        image = Image.fromarray(data) if isinstance(data, np.ndarray) else data
         photo = ImageTk.PhotoImage(image)  # Convert to PhotoImage
         self.image_label.configure(image=photo)
         self.curr_image = image, photo  # Keep a reference
@@ -278,7 +367,7 @@ class ImageViewer(tk.Tk):
         x = int(photo_x * width_scale)
         y = int(photo_y * height_scale)
 
-        if x < 0 or y < 0 or x >= orig_height or y >= orig_width:
+        if x < 0 or y < 0 or x >= orig_width or y >= orig_height:
             raise ArgumentError(None, "")
 
         return x, y, image
@@ -303,9 +392,6 @@ class ImageViewer(tk.Tk):
                     self.after_idle(self._draw, data)
         finally:
             with self.lock:
-                self.searching = 0
-                self.after_idle(lambda: self.cancel_search_button.configure(
-                    state='disabled'))
                 self._config_button()
                 self.searching -= 1
                 self._config_button()
