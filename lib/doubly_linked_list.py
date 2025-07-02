@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Generic, Optional, TypeVar, Iterable
+from typing import Generic, Iterable, Optional, TypeVar
 
 T = TypeVar('T')
 
@@ -21,7 +21,7 @@ class DoublyLinkedNode(Generic[T]):
     value: Optional[T] = None
     prev: Optional["DoublyLinkedNode[T]"] = None
     next: Optional["DoublyLinkedNode[T]"] = None
-    child: Any = None
+    child: Optional["DoublyLinkedNode[T]"] = None
 
     def __str__(self):
         return (f"{type(self)}:\n"
@@ -62,6 +62,10 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
             yield curr
             curr = curr.prev
 
+    @property
+    def head(self) -> DoublyLinkedNode_T:
+        return self._init
+
     def is_empty(self) -> bool:
         return not self._init.next
 
@@ -90,15 +94,21 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
 
     def curr_at_init(self) -> bool:
         """
-        :return: True iff the cursor before the first element.
+        :return: ``True`` iff the cursor before the first element.
         """
         return self._curr == self._init
 
     def curr_at_first(self) -> bool:
         """
-        :return: True iff the cursor is pointing at the first element.
+        :return: ``True`` iff the cursor is pointing at the first element.
         """
         return self._curr.prev == self._init
+
+    def curr_at_tail(self) -> bool:
+        """
+        :return: ``True`` iff the cursor is pointing at the last element.
+        """
+        return self._curr == self._tail
 
     def prev(self) -> DoublyLinkedNode_T:
         """
@@ -108,9 +118,7 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
         :raises IndexError: iff list is empty
         """
         self._check_empty()
-        if self._curr != self._init:
-            self._curr = self._curr.prev;
-            print(self)
+        if self._curr != self._init: self._curr = self._curr.prev
         return self._curr
 
     def next(self) -> DoublyLinkedNode_T:
@@ -121,9 +129,7 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
         :raises IndexError: iff list is empty
         """
         self._check_empty()
-        if self._curr != self._tail:
-            self._curr = self._curr.next;
-            print(self)
+        if self._curr != self._tail: self._curr = self._curr.next
         return self._curr
 
     def last(self) -> DoublyLinkedNode_T:

@@ -1,17 +1,16 @@
 import cv2
 import heapq
 import numpy as np
-from matplotlib import pyplot as plt
-
 from lib.doubly_linked_list import DoublyLinkedList, T
 from lib.point import LineNode, Point, PointNode
+from matplotlib import pyplot as plt
 from typing import List, Optional, Tuple
 
 
-class PointStack(DoublyLinkedList[PointNode]): pass
+class PointList(DoublyLinkedList[PointNode]): pass
 
 
-class PolyLineStack(DoublyLinkedList[LineNode]): pass
+class LineList(DoublyLinkedList[LineNode]): pass
 
 
 class Searcher:
@@ -20,16 +19,15 @@ class Searcher:
     path between the last two points.
 
     :ivar canceled: ``True`` iff user terminates search
-    :ivar clicks: A stack of points representing the position clicked by user
-    :ivar undid_clicks: A stack of points undone by user
-    :ivar all_lines: A stack of lines returned by searcher
-    :ivar undid_lines: A stack of lines undone by user
+    :ivar clicks: A ``DoublyLinkedList`` of points representing the position
+     clicked by user
+    :ivar all_lines: A ``DoublyLinkedList`` of lines returned by searcher
     """
 
     def __init__(self, lock):
         self.canceled = False
-        self.clicks = PointStack()
-        self.all_lines = PolyLineStack()
+        self.clicks = PointList()
+        self.all_lines = LineList()
         self._lock = lock
         self._cleared_count = 0
 
@@ -44,7 +42,7 @@ class Searcher:
 
     def clear(self, is_button=False):
         cleared_count = 0
-        while self.clicks.curr_at_init():
+        while not self.clicks.curr_at_init():
             if is_button: cleared_count += 1
             if self.clicks.peek().prev: self.undo()
         self._cleared_count = cleared_count
@@ -54,8 +52,9 @@ class Searcher:
             for _ in range(self._cleared_count): self.redo()
             self._cleared_count = 0
         else:
-            if self.all_lines.peek().prev: self.all_lines.prev()
+            if not self.all_lines.is_empty(): self.all_lines.prev()
             self.clicks.prev()
+        return self.clicks.peek()
 
     def redo(self):
         if self.clicks.peek().prev: self.all_lines.next()
@@ -127,7 +126,6 @@ class Searcher:
         while curr != orig:
             path.append(curr)
             curr = Point(*predecessors[*curr._])
-            print(f"curr: {curr}, pred: {predecessors[*curr._]}")
             if curr == Point(-1, -1):
                 print("Searcher: Path broken, no predecessor found")
                 return None
@@ -143,10 +141,9 @@ class Searcher:
 
     def plot_brightness(self, data: np.ndarray, shape: Point):
         grayscale = np.mean(data, axis=2) if len(data.shape) == 3 else data
-
         fig, ax = plt.subplots()
 
-        brightness_values = [grayscale[p.y, p.x] for p in self.reconstruct_line()]
+        brightness_values = [grayscale[*p._] for p in self.reconstruct_line()]
         ax.plot(range(len(brightness_values)), brightness_values)
         ax.set_xlabel('Number of pixels from origin')
         ax.set_ylabel('Brightness')

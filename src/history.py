@@ -13,6 +13,8 @@ class Action:
     points: List[Tuple[int, int]]
     data: np.ndarray
 
+    __str__ = lambda self: f"Action:{self.points}\n"
+
 
 class ActionNode(DoublyLinkedNode[Action]): pass
 
@@ -27,7 +29,7 @@ class History:
 
     def __init__(self):
         # Structure:
-        # `[_init] --(child)-> [_root] --(child)-> [_list]`
+        # `[_init] -> [_root] -> [_list]`
         #
         # Notes:
         # `curr` initially points to `_init`. When first action is pushed,
@@ -35,8 +37,8 @@ class History:
         # `_list.curr`.
 
         self._list: PointsList = PointsList()
-        self._root: ActionNode = ActionNode(child=self._list)
-        self._init: ActionNode = ActionNode(child=self._root)
+        self._init: ActionNode = ActionNode()
+        self._root: ActionNode = ActionNode(prev=self._init)
         self._curr: ActionNode = self._init
 
         # points to `_init` except immediately after `clear` is called,
@@ -64,6 +66,8 @@ class History:
     def clear(self):
         self._list.clear()
         self._root.value = None
+        self._init.next = None
+        self._root.next = None
         self._curr = self._init
 
     def peek(self) -> ActionNode:
@@ -72,9 +76,11 @@ class History:
     def push(self, value: Action) -> ActionNode:
         if self._curr == self._init:
             self._root.value = value
-            self._root.child.clear()
-            self._curr = self._root
+            self._root.next = None
+            self._list.clear()
+            self._curr = self._init.next = self._root
         else:
+            self._root.next = self._list.head
             self._list.push(ActionNode(value))
             self._curr = self._list.peek()
         self._last_curr = self._init
@@ -84,12 +90,12 @@ class History:
         """
         Moves cursor to the previous node, and returns it.
 
-        If `undo_all` was called immediately before this function is called,
-        cursor is moved to the node immediately before `undo_all` was called
+        If ``undo_all`` was called immediately before this function is called,
+        cursor is moved to the node immediately before ``undo_all`` was called
         instead.
 
         :raises IndexError: iff cursor is at the start of the tree (before the
-         first node), and `undo_all` was not called immediately before this
+         first node), and ``undo_all`` was not called immediately before this
          function is called.
         """
         if self._last_curr != self._init:
@@ -98,12 +104,10 @@ class History:
         elif self._curr == self._init:
             raise IndexError()
         else:
-            if self.curr_has_prev() and self._curr.prev.value:
-                self._curr = self._list.prev()
-            else:
-                self._list.init()
+            if self._curr == self._root or self._curr == self._root.next.next:
                 self._curr = self._init
-
+            else:
+                self._curr = self._list.prev()
         return self._curr.child if self.curr_has_child() else self._curr
 
     def undo_all(self, is_button=False) -> ActionNode:
@@ -144,15 +148,10 @@ class History:
         return self._curr.child if self.curr_has_child() else self._curr
 
     def curr_has_prev(self) -> bool:
-        if self._last_curr != self._init: return True
-        if self._curr == self._root: return self._root.value is not None
-        return not self._list.is_empty() and self._curr.prev is not None
+        return self._curr.prev is not None
 
     def curr_has_next(self) -> bool:
-        if self._last_curr != self._init: return False
-        if self._curr == self._init: return self._root.value is not None
-        return not self._list.is_empty() and self._curr.next is not None
+        return self._curr.next is not None
 
     def curr_has_child(self) -> bool:
-        return not (self._list.is_empty() or self._curr.child is None or
-                    self._curr == self._root)
+        return self._curr.child is not None

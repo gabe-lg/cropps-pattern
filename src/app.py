@@ -51,7 +51,7 @@ class ImageViewer(tk.Tk):
 
         self.brightness_graph_frame = tk.Frame(self.graph_frame)
         self.brightness_graph_frame.pack(fill='both',
-                                         expand=True,padx=20, pady=20)
+                                         expand=True, padx=20, pady=20)
 
         self.main_pane.sash_place(0, int(self.winfo_width() * 0.7), 0)
 
@@ -146,14 +146,11 @@ class ImageViewer(tk.Tk):
             f"{window_width}x{window_height}+{position_x}+{position_y}")
 
     def undo(self):
-        res = self.history.undo()
-        self.searcher.undo()
         if self.history.is_init_state():
             self.clear()
         else:
             self._draw(res.value.data)
         self._config_button()
-
         return res
 
     def redo(self):
@@ -208,15 +205,8 @@ class ImageViewer(tk.Tk):
                                  "This folder does not contain any image files.")
             return
 
-        # Resize image if it's too large (maintaining aspect ratio)
-        display_size = (800, 600)  # Maximum display size
-        image.thumbnail(display_size, Image.Resampling.LANCZOS)
-
         # Update the label with new image
-        photo = ImageTk.PhotoImage(image)
-        self.image_label.configure(image=photo)
-        self.curr_image = image, photo  # Keep a reference
-        self.orig_image = image, photo
+        self._change_image(image)
         self.history.init(np.array(image))
         self.cancel_search()
         self._config_button()
@@ -285,17 +275,17 @@ class ImageViewer(tk.Tk):
         #     self._undo()
 
     def prev_image(self):
-        self._draw(self.image_list.prev().value)
+        self._change_image(self.image_list.prev().value)
 
     def next_image(self):
-        self._draw(self.image_list.next().value)
+        self._change_image(self.image_list.next().value)
 
     def first_image(self):
         self.image_list.init()
         self.next_image()
 
     def last_image(self):
-        self._draw(self.image_list.last().value)
+        self._change_image(self.image_list.last().value)
 
     def on_click(self, event, is_temp=0):
         try:
@@ -323,9 +313,35 @@ class ImageViewer(tk.Tk):
                 args=(np.array(self.orig_image[0]), action),
                 daemon=True).start()
 
-        self.after_idle(self._plot_brightness, np.array(self.orig_image[0]))
+    def _change_image(self, image: ImageFile.ImageFile):
+        # Resize image if it's too large (maintaining aspect ratio)
+        display_size = (800, 600)  # Maximum display size
+        image.thumbnail(display_size, Image.Resampling.LANCZOS)
+
+        self.orig_image = image.copy(), ImageTk.PhotoImage(image)
+        data = np.array(image)
+        for p in self.searcher.clicks:
+            cv2.circle(data, p.value, CIR_SIZE, (0, 0, 0), -1)
+        cv2.polylines(data, [np.array(self.searcher.reconstruct_line())], False,
+                      (0, 0, 0), LINE_WIDTH)
+        self._draw(data)
+        self._config_button()
 
     def _config_button(self):
+        if self.image_list.curr_at_first():
+            self.prev_button.configure(state='disabled')
+            self.first_button.configure(state='disabled')
+        else:
+            self.prev_button.configure(state='normal')
+            self.first_button.configure(state='normal')
+
+        if self.image_list.curr_at_tail():
+            self.next_button.configure(state='disabled')
+            self.last_button.configure(state='disabled')
+        else:
+            self.next_button.configure(state='normal')
+            self.last_button.configure(state='normal')
+
         if self.history.curr_has_prev() and not self.searching:
             self.undo_button.configure(state='normal')
         else:
@@ -349,13 +365,11 @@ class ImageViewer(tk.Tk):
             self.cancel_search_button.configure(state='disabled')
 
     def _draw(self, data, invis=0):
-        if not isinstance(data, (np.ndarray, ImageFile.ImageFile)):
-            raise TypeError()
-
-        image = Image.fromarray(data) if isinstance(data, np.ndarray) else data
+        image = Image.fromarray(data)
         photo = ImageTk.PhotoImage(image)  # Convert to PhotoImage
         self.image_label.configure(image=photo)
         self.curr_image = image, photo  # Keep a reference
+        self.after_idle(self._plot_brightness, np.array(self.orig_image[0]))
 
     def _get_coor(self, event):
         try:
@@ -420,8 +434,8 @@ class ImageViewer(tk.Tk):
         # Embed the plot into the tkinter frame
         canvas = FigureCanvasTkAgg(
             self.searcher.plot_brightness(data,
-            Point(self.graph_frame.winfo_width(),
-                  self.graph_frame.winfo_height())),
+                                          Point(self.graph_frame.winfo_width(),
+                                                self.graph_frame.winfo_height())),
             master=self.brightness_graph_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
