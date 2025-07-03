@@ -3,7 +3,6 @@ import heapq
 import numpy as np
 from lib.doubly_linked_list import DoublyLinkedList, T
 from lib.point import LineNode, Point, PointNode
-from matplotlib import pyplot as plt
 from typing import List, Optional, Tuple
 
 
@@ -137,20 +136,7 @@ class Searcher:
         return path
 
     def reconstruct_line(self):
-        return [p for l in self.all_lines for p in l.value]
-
-    def plot_brightness(self, data: np.ndarray, shape: Point):
-        grayscale = np.mean(data, axis=2) if len(data.shape) == 3 else data
-        fig, ax = plt.subplots()
-
-        brightness_values = [grayscale[*p._] for p in self.reconstruct_line()]
-        ax.plot(range(len(brightness_values)), brightness_values)
-        ax.set_xlabel('Number of pixels from origin')
-        ax.set_ylabel('Brightness')
-        ax.set_title('Brightness Along Selected Line')
-        fig.tight_layout()
-
-        return fig
+        return [p for l in self.all_lines for p in l.value][::-1]
 
     @staticmethod
     def _calc_weight(x: float) -> int | float:

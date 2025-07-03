@@ -12,8 +12,9 @@ class Action:
     """
     points: List[Tuple[int, int]]
     data: np.ndarray
+    image_id: int
 
-    __str__ = lambda self: f"Action:{self.points}\n"
+    __str__ = lambda self: f"Action: {self.points}\n"
 
 
 class ActionNode(DoublyLinkedNode[Action]): pass
@@ -53,7 +54,7 @@ class History:
 
         :param data: A NumPy array representing an image.
         """
-        self._init.value = Action([], data.copy())
+        self._init.value = Action([], data.copy(), 0)
         self.clear()
 
     def is_init_state(self) -> bool:
@@ -148,10 +149,12 @@ class History:
         return self._curr.child if self.curr_has_child() else self._curr
 
     def curr_has_prev(self) -> bool:
-        return self._curr.prev is not None
+        if self._last_curr == self._init: return self._curr.prev is not None
+        return True
 
     def curr_has_next(self) -> bool:
-        return self._curr.next is not None
+        if self._last_curr == self._init: return self._curr.next is not None
+        return False
 
     def curr_has_child(self) -> bool:
         return self._curr.child is not None

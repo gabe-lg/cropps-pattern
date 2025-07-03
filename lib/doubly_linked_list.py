@@ -113,7 +113,7 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
     def prev(self) -> DoublyLinkedNode_T:
         """
         Moves cursor to the previous node, and returns it. Does nothing if
-        the node is already the first.
+        the node is already before the first node.
 
         :raises IndexError: iff list is empty
         """
@@ -140,6 +140,22 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
         """
         self._check_empty()
         self._curr = self._tail
+        return self._curr
+
+    def goto(self, index: int):
+        """
+        Moves cursor to the node at index ``index``.
+        :param index: The index of the node to move to.
+         Must be non-negative and less than the length of the list.
+        :raises IndexError: iff list is empty or index out of bounds.
+        :raises ValueError: iff index is negative.
+        """
+        self._check_empty()
+        curr = self._init.next
+        for _ in range(index):
+            if curr == self._tail: raise IndexError()
+            curr = curr.next
+        self._curr = curr
         return self._curr
 
     def _check_empty(self):
