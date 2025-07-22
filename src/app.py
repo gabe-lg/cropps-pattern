@@ -7,11 +7,10 @@ import src.history
 import src.searcher
 from argparse import ArgumentError
 from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
-from lib.point import Point, PointNode
+from lib.point import Point
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from tkinter import filedialog, messagebox
-from typing import Tuple
 from PIL import Image, ImageFile, ImageTk
 
 SIZE_RATIO = 0.75
@@ -19,7 +18,7 @@ CIR_SIZE = 3
 LINE_WIDTH = 2
 
 
-class ImageNode(DoublyLinkedNode[Tuple[ImageFile.ImageFile, int]]): pass
+class ImageNode(DoublyLinkedNode[ImageFile.ImageFile]): pass
 
 
 class ImageList(DoublyLinkedList[ImageNode]): pass
@@ -52,8 +51,6 @@ class ImageViewer(tk.Tk):
         self.brightness_graph_frame = tk.Frame(self.graph_frame)
         self.brightness_graph_frame.pack(fill='both',
                                          expand=True, padx=20, pady=20)
-
-        self.main_pane.sash_place(0, int(self.winfo_width() * 0.7), 0)
 
         # left button frame
         self.left_button_frame = tk.Frame(self.content_frame, bd=2,
@@ -116,8 +113,7 @@ class ImageViewer(tk.Tk):
         self.save_button.pack(side='left', padx=5)
 
         self.clear_button = (
-            tk.Button(self.button_frame, text="Clear",
-                      command=lambda: self.clear(is_button=True)))
+            tk.Button(self.button_frame, text="Clear", command=self.clear))
         self.clear_button.pack(side='left', padx=5)
 
         self.cancel_search_button = (
@@ -145,7 +141,7 @@ class ImageViewer(tk.Tk):
         self.playing = False
         self.searching = 0
         self.searcher = src.searcher.Searcher(self.lock)
-        self.history = src.history.History()
+        self.history = src.history.PointsList()
 
         self.brightness_canvas = None
         self.graph = None
@@ -160,20 +156,17 @@ class ImageViewer(tk.Tk):
         position_y = (screen_height - window_height) // 2
         self.geometry(
             f"{window_width}x{window_height}+{position_x}+{position_y}")
+        self.update()
+        self.main_pane.sash_place(0, int(self.winfo_width() * 0.7), 0)
 
     def undo(self):
-        res = self.history.undo()
-        self.searcher.undo()
-        if self.history.is_init_state():
-            self.clear()
-        else:
-            self._draw(res.value.data)
-        self.image_list.goto(res.value.image_id)
+        self.history.prev()
+        self._draw()
         self._config_button()
 
     def redo(self):
-        self.searcher.redo()
-        self._draw(self.history.redo().value.data)
+        self.history.next()
+        self._draw()
         self._config_button()
 
     def open(self, is_folder: bool):
@@ -195,18 +188,16 @@ class ImageViewer(tk.Tk):
         if not file_path: return
 
         self.cancel_search()
-        if self.history.peek().value:
-            self.clear()  # do not clear if no original image
         self.history.clear()
         self.image_list.clear()
 
         # push images to list
         if is_folder:
             self.image_list.push_all(
-                [f[2] for f in sorted(
-                    [(os.path.getmtime(os.path.join(file_path, f)), i,
-                      ImageNode((Image.open(os.path.join(file_path, f)), i)))
-                     for i, f in enumerate(os.listdir(file_path))
+                [f[1] for f in sorted(
+                    [(os.path.getmtime(os.path.join(file_path, f)),
+                      ImageNode(Image.open(os.path.join(file_path, f))))
+                     for f in os.listdir(file_path)
                      if f.lower().endswith(
                         (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif",
                          ".tiff"))])])
@@ -216,7 +207,7 @@ class ImageViewer(tk.Tk):
         # Open and display the image
         self.image_list.init()  # navigate to the start of the list
         try:
-            image = self.image_list.next().value[0]
+            image = self.image_list.next().value
         except IndexError:
             self.image_label.configure(image=tk.PhotoImage())
             messagebox.showerror("Open folder",
@@ -225,7 +216,6 @@ class ImageViewer(tk.Tk):
 
         # Update the label with new image
         self._change_image(image)
-        self.history.init(np.array(image))
         self.cancel_search()
         self._config_button()
 
@@ -264,14 +254,21 @@ class ImageViewer(tk.Tk):
                                                f"\n{file_path}\n"
                                                "successfully.")
             except OSError as e:
-                messagebox.showerror("Error", "An error occured while saving:"
+                messagebox.showerror("Error", "An error occurred while saving:"
                                               f"\n{str(e)}")
 
-    def clear(self, is_button=False):
+    # def to_csv(self):
+    #     for image in self.image_list:
+    #         filename = f'intensity_values{image.value[1]}.csv'
+    #         with open(filename, mode='w', newline='') as file:
+    #             writer = csv.writer(file)
+    #             writer.writerows(np.array(image.value[0]))
+    #         print(f"Saved intensity values to {filename}")
+
+    def clear(self):
         self.cancel_search()
-        self.searcher.clear(is_button)
-        self.history.undo_all(is_button)
-        self._draw(self.history.peek().value.data)
+        self.history.undo_all()
+        self._draw()
         self._config_button()
         print("Cleared annotations")
 
@@ -291,43 +288,38 @@ class ImageViewer(tk.Tk):
 
     def prev_image(self):
         if not self.image_list.curr_at_first():
-            self._change_image(self.image_list.prev().value[0])
+            self._change_image(self.image_list.prev().value)
 
     def next_image(self):
-        self._change_image(self.image_list.next().value[0])
+        self._change_image(self.image_list.next().value)
 
     def first_image(self):
         self.image_list.init()
         self.next_image()
 
     def last_image(self):
-        self._change_image(self.image_list.last().value[0])
+        self._change_image(self.image_list.last().value)
 
-    def on_click(self, event, is_temp=0):
+    def on_click(self, event):
         try:
             x, y, image = self._get_coor(event)
         except ArgumentError:
             return
 
-        data = np.array(image)
-        print(f"Click detected at x={x}, y={y} with intensity "
-              f"{data[y, x]}")
-
         with self.lock:
-            self.searcher.push(self.searcher.clicks, PointNode(Point(x, y)))
-            action = self.history.push(src.history.Action(
-                [(x, y)], data, self.image_list.peek().value[1]))
-            self.searching += 1 if not self.searcher.clicks.curr_at_first() else 0
+            action_node = src.history.ActionNode(
+                src.history.Action(Point(x, y)))
+            self.history.push(action_node)
+            self.searching += 1
 
         # now do UI updates and start thread outside the lock
-        cv2.circle(data, (x, y), CIR_SIZE, (0, 0, 0), -1)
-        self._draw(data)
+        self._draw()
         self._config_button()
 
         if self.searching:
             threading.Thread(
                 target=self._search,
-                args=(np.array(self.orig_image[0]), action),
+                args=(np.array(self.orig_image[0]), action_node),
                 daemon=True).start()
 
     def _change_image(self, image: ImageFile.ImageFile):
@@ -335,13 +327,8 @@ class ImageViewer(tk.Tk):
         display_size = (800, 600)  # Maximum display size
         image.thumbnail(display_size, Image.Resampling.LANCZOS)
 
-        data = np.array(image)
         self.orig_image = image.copy(), ImageTk.PhotoImage(image)
-        for p in self.searcher.clicks:
-            cv2.circle(data, p.value, CIR_SIZE, (0, 0, 0), -1)
-        cv2.polylines(data, [np.array(self.searcher.reconstruct_line())], False,
-                      (0, 0, 0), LINE_WIDTH)
-        self._draw(data)
+        self._draw()
         self._config_button()
 
     def _config_button(self):
@@ -360,19 +347,19 @@ class ImageViewer(tk.Tk):
             self.next_button.configure(state='normal')
             self.last_button.configure(state='normal')
 
-        if (self.history.curr_has_prev() and not self.searching
-                and not self.playing):
+        if not (self.history.curr_at_init() or self.searching
+                or self.playing):
             self.undo_button.configure(state='normal')
         else:
             self.undo_button.configure(state='disabled')
 
-        if (self.history.curr_has_next() and not self.searching
-                and not self.playing):
+        if self.history.has_next() and not (self.searching
+                or self.playing):
             self.redo_button.configure(state='normal')
         else:
             self.redo_button.configure(state='disabled')
 
-        if self.history.is_init_state() or self.playing:
+        if self.history.curr_at_init() or self.history.cleared or self.playing:
             self.save_button.configure(state='disabled')
             self.clear_button.configure(state='disabled')
         else:
@@ -395,7 +382,14 @@ class ImageViewer(tk.Tk):
             self.play_button.configure(state='disabled')
             self.pause_button.configure(state='disabled')
 
-    def _draw(self, data, invis=0):
+    def _draw(self):
+        data = np.array(self.image_list.peek().value)
+
+        for circle in self.history.get_circles():
+            cv2.circle(data, circle, CIR_SIZE, (0, 0, 0), -1)
+        cv2.polylines(data, self.history.get_lines(), False, (0, 0, 0),
+                      LINE_WIDTH)
+
         image = Image.fromarray(data)
         photo = ImageTk.PhotoImage(image)  # Convert to PhotoImage
         self.image_label.configure(image=photo)
@@ -432,26 +426,21 @@ class ImageViewer(tk.Tk):
 
         return x, y, image
 
-    def _search(self, orig, action, thread_count=1):
-        while thread_count < self.searching:
-            if self.searcher.canceled: return
-
+    def _search(self, orig_image, action_node):
         try:
-            visited = np.zeros(orig.shape[:2], dtype=bool)
-            line = self.searcher.search(visited, orig)
+            if not action_node.prev.value: return
+            line = self.searcher.search(action_node.prev.value.point,
+                                        action_node.value.point,
+                                        np.array(orig_image))
             with self.lock:
                 if line and not self.searcher.canceled:
-                    data = self.history.peek().value.data
-                    points = np.array(line)
-                    cv2.polylines(data, [points], False, (0, 0, 0), LINE_WIDTH)
+                    data = np.array(self.image_list.peek().value.copy())
+                    cv2.polylines(data, [np.array(line)], False, (0, 0, 0),
+                                  LINE_WIDTH)
 
                     # Store result in stack
-                    self.after_idle(
-                        lambda: setattr(action, 'child', src.history.ActionNode(
-                            src.history.Action(line, data,
-                                               self.image_list.peek().value[
-                                                   1]))))
-                    self.after_idle(self._draw, data)
+                    action_node.value.line = line
+                    self.after_idle(self._draw)
         finally:
             with self.lock:
                 self._config_button()
@@ -467,16 +456,10 @@ class ImageViewer(tk.Tk):
         self._config_button()
 
     def _plot_brightness(self, data):
-        # Process data for brightness plot
-        data = np.clip(255 * (data / np.max(data)), 0, 255)
         data = np.mean(data, axis=2) if len(data.shape) == 3 else data
 
-        brightness_values = [
-            v if 0 <= v <= 255
-            else (_ for _ in ()).throw(ValueError(f"Invalid brightness {v}"))
-            for p in self.searcher.reconstruct_line()
-            for v in [data[*p._]]
-        ]
+        brightness_values = [data[p[1], p[0]] for l in self.history.get_lines()
+                             for p in l][::-1]
 
         if self.brightness_canvas is None:
             # First time: create figure and canvas
@@ -492,7 +475,7 @@ class ImageViewer(tk.Tk):
         ax.set_xlabel('Number of pixels from origin')
         ax.set_ylabel('Brightness')
         ax.set_title('Brightness Along Selected Line')
-        ax.set_ylim(0, 255)
+        ax.set_ylim(0, 500)
         ax.plot(
             range(len(brightness_values)), brightness_values)
         self.brightness_canvas.draw()

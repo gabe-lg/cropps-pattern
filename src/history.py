@@ -1,7 +1,8 @@
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
-from typing import List, Tuple
+from lib.point import Point
+from typing import Any, List, Tuple
 
 
 @dataclass
@@ -10,9 +11,9 @@ class Action:
     :ivar points: a list of ``Points`` representing a line.
     :ivar data: a NumPy array representing an image.
     """
-    points: List[Tuple[int, int]]
-    data: np.ndarray
-    image_id: int
+    point: Point
+    line: List[Point] = field(default_factory=list)
+    area: List[Point] = field(default_factory=list)
 
     __str__ = lambda self: f"Action: {self.points}\n"
 
@@ -20,141 +21,38 @@ class Action:
 class ActionNode(DoublyLinkedNode[Action]): pass
 
 
-class PointsList(DoublyLinkedList[ActionNode]): pass
-
-
-class History:
-    """
-    A tree of ``ActionNode`` objects with a cursor for tree traversal.
-    """
-
+class PointsList(DoublyLinkedList[ActionNode]):
     def __init__(self):
-        # Structure:
-        # `[_init] -> [_root] -> [_list]`
-        #
-        # Notes:
-        # `curr` initially points to `_init`. When first action is pushed,
-        # it points to `_root`. Then it points to the same object as
-        # `_list.curr`.
+        super().__init__()
+        self._clear = ActionNode()
 
-        self._list: PointsList = PointsList()
-        self._init: ActionNode = ActionNode()
-        self._root: ActionNode = ActionNode(prev=self._init)
-        self._curr: ActionNode = self._init
-
-        # points to `_init` except immediately after `clear` is called,
-        # in which case it points to the node that `curr` pointed to
-        # immediately before `clear` was called.
-        self._last_curr: ActionNode = self._init
-
-    def init(self, data: np.ndarray):
+    @property
+    def cleared(self):
         """
-        Called after initialization to save a copy of `data` before it is
-        manipulated, then calls ``clear``.
-
-        :param data: A NumPy array representing an image.
+        :return: ``True`` iff the last action was "Clear".
         """
-        self._init.value = Action([], data.copy(), 0)
-        self.clear()
+        return self._curr == self._clear
 
-    def is_init_state(self) -> bool:
+    def get_circles(self) -> List[Point]:
         """
-        :return: ``True`` iff the cursor is at the start of the tree (
-         before the first node).
+        :return: a list of circles from the current frame up to the first one.
         """
-        return self._curr == self._init
+        if not self._curr.value: return []
+        return [node.value.point for node in self.iter_prev()]
 
-    def clear(self):
-        self._list.clear()
-        self._root.value = None
-        self._init.next = None
-        self._root.next = None
-        self._curr = self._init
-
-    def peek(self) -> ActionNode:
-        return self._curr.child if self.curr_has_child() else self._curr
-
-    def push(self, value: Action) -> ActionNode:
-        if self._curr == self._init:
-            self._root.value = value
-            self._root.next = None
-            self._list.clear()
-            self._curr = self._init.next = self._root
-        else:
-            self._root.next = self._list.head
-            self._list.push(ActionNode(value))
-            self._curr = self._list.peek()
-        self._last_curr = self._init
-        return self._curr
-
-    def undo(self) -> ActionNode:
+    def get_lines(self) -> List[np.ndarray[Tuple[int, ...], Any]]:
         """
-        Moves cursor to the previous node, and returns it.
-
-        If ``undo_all`` was called immediately before this function is called,
-        cursor is moved to the node immediately before ``undo_all`` was called
-        instead.
-
-        :raises IndexError: iff cursor is at the start of the tree (before the
-         first node), and ``undo_all`` was not called immediately before this
-         function is called.
+        :return: a list of lines from the current frame up to the first one.
+         Lines are converted to NumPy arrays for use in ``cv2.polylines``.
         """
-        if self._last_curr != self._init:
-            self._curr = self._last_curr
-            self._last_curr = self._init
-        elif self._curr == self._init:
-            raise IndexError()
-        else:
-            if self._curr == self._root or self._curr == self._root.next.next:
-                self._curr = self._init
-            else:
-                self._curr = self._list.prev()
-        return self._curr.child if self.curr_has_child() else self._curr
+        if not self._curr.value: return []
+        return [np.array(node.value.line) for node in self.iter_prev()]
 
-    def undo_all(self, is_button=False) -> ActionNode:
-        """
-        Moves the cursor to the start of the tree, and returns it.
+    def push(self, value: ActionNode):
+        if self.cleared: self.first()
+        super().push(value)
 
-        Keeps track of the cursor's position immediately before this function
-        was called.
-        """
-        if is_button: self._last_curr = self._curr
-        self._curr = self._init
-        return self._curr
-
-    def redo(self) -> ActionNode:
-        """
-        Moves the cursor to the next node, and returns it.
-
-        :raises IndexError: iff the current node has no next node.
-        """
-        if not self.curr_has_next(): raise IndexError()
-        try:
-            self._curr = self._list.next()
-        except IndexError:
-            self._curr = self._root
-        return self._curr.child if self.curr_has_child() else self._curr
-
-    def redo_all(self) -> ActionNode:
-        """
-        Moves the cursor to the last node, and returns it.
-
-        :raises IndexError: iff the current node has no next node.
-        """
-        if not self.curr_has_next(): raise IndexError()
-        if self._list.is_empty():
-            self._curr = self._root
-        else:
-            self._curr = self._list.last()
-        return self._curr.child if self.curr_has_child() else self._curr
-
-    def curr_has_prev(self) -> bool:
-        if self._last_curr == self._init: return self._curr.prev is not None
-        return True
-
-    def curr_has_next(self) -> bool:
-        if self._last_curr == self._init: return self._curr.next is not None
-        return False
-
-    def curr_has_child(self) -> bool:
-        return self._curr.child is not None
+    def undo_all(self):
+        """ Clears frame while preserving history. """
+        self._clear.prev = self._curr
+        self._curr = self._clear

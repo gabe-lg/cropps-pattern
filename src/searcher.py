@@ -25,41 +25,10 @@ class Searcher:
 
     def __init__(self, lock):
         self.canceled = False
-        self.clicks = PointList()
-        self.all_lines = LineList()
         self._lock = lock
         self._cleared_count = 0
 
-    def push(self, l: DoublyLinkedList[T], elem: T):
-        """
-        Pushes ``elem`` into ``l``.
-        :param l: A ``DoublyLinkedList``
-        :param elem: The element to be pushed
-        """
-        l.push(elem)
-        self._cleared_count = 0
-
-    def clear(self, is_button=False):
-        cleared_count = 0
-        while not self.clicks.curr_at_init():
-            if is_button: cleared_count += 1
-            if self.clicks.peek().prev: self.undo()
-        self._cleared_count = cleared_count
-
-    def undo(self):
-        if self._cleared_count:
-            for _ in range(self._cleared_count): self.redo()
-            self._cleared_count = 0
-        else:
-            if not self.all_lines.is_empty(): self.all_lines.prev()
-            self.clicks.prev()
-        return self.clicks.peek()
-
-    def redo(self):
-        if self.clicks.peek().prev: self.all_lines.next()
-        self.clicks.next()
-
-    def search(self, visited: np.ndarray, data: np.ndarray) \
+    def search(self, orig: Point, dest: Point, data: np.ndarray) \
             -> Optional[List[Tuple[int, int]]]:
         """
         Returns the shortest path between ``orig = self.clicks[-2]`` and
@@ -73,16 +42,10 @@ class Searcher:
         ``dest``.
         """
         self.canceled = False
-        if not self.clicks: return None
 
-        with self._lock:
-            dest = self.clicks.peek().value
-            orig = self.clicks.peek().prev.value
         print(f"Searcher: starting search with origin at {orig} and "
               f"destination at {dest}...")
 
-        # Get rid of nonsensical values then normalize
-        cv2.normalize(np.clip(data, 0, 255), data, 0., 255., cv2.NORM_MINMAX)
         # Convert to grayscale if the image is in color
         if len(data.shape) == 3: data = np.mean(data, axis=2)
 
@@ -90,7 +53,7 @@ class Searcher:
         steps = [Point(1, 0), Point(0, 1), Point(-1, 0), Point(0, -1)]
 
         # init
-        assert not visited.any()
+        visited = np.full((height, width), False)
         distances = np.full((height, width), float('inf'))
         distances[*orig._] = 0
         predecessors = np.full((height, width, 2), -1, dtype=int)
@@ -131,12 +94,7 @@ class Searcher:
         if not path: return None
 
         print("Searcher: path found!")
-        self.all_lines.push(LineNode(path))
-        visited.fill(False)
         return path
-
-    def reconstruct_line(self):
-        return [p for l in self.all_lines for p in l.value][::-1]
 
     @staticmethod
     def _calc_weight(x: float) -> int | float:

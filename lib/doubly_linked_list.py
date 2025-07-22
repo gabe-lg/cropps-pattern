@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import Generic, Iterable, Optional, TypeVar
+from typing import Iterable, Optional, TypeVar, List, Generator
 
 T = TypeVar('T')
 
 
 @dataclass
-class DoublyLinkedNode(Generic[T]):
+class DoublyLinkedNode[T]:
     """
     Graph::
 
@@ -24,9 +24,10 @@ class DoublyLinkedNode(Generic[T]):
     child: Optional["DoublyLinkedNode[T]"] = None
 
     def __str__(self):
-        return (f"{type(self)}:\n"
+        return (f"{type(self)}:\n-----\n"
                 f"Value:{self.value}\n"
-                f"Prev:{self.prev}\n"
+                f"Prev is {"not " if self.prev else ""}None\n"
+                f"Next is {"not " if self.next else ""}None\n"
                 f"Child:{self.child}\n\n")
 
 
@@ -57,14 +58,32 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
         return f"{type(self)}:\n" + res
 
     def __iter__(self):
+        curr = self._init.next
+        while curr:
+            yield curr
+            curr = curr.next
+
+    def iter_prev(self):
         curr = self._curr
-        while curr.value:
+        while curr != self._init:
             yield curr
             curr = curr.prev
 
-    @property
-    def head(self) -> DoublyLinkedNode_T:
-        return self._init
+    def iter_list(self, indices: List[int]) -> Generator[DoublyLinkedNode_T]:
+        """
+        A generator yielding nodes corresponding to the specified indices
+        in the linked list.
+
+        :param indices: The indices of nodes to be returned.
+        """
+        curr = self._init
+        curr_id = -1
+        indices.sort()
+        for index in indices:
+            for i in range(index - curr_id):
+                curr = curr.next
+            curr_id += index
+            yield curr
 
     def is_empty(self) -> bool:
         return not self._init.next
@@ -110,6 +129,15 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
         """
         return self._curr == self._tail
 
+    def first(self):
+        """
+        Moves cursor before the first node.
+
+        :raises IndexError: iff list is empty
+        """
+        self._check_empty()
+        self._curr = self._init
+
     def prev(self) -> DoublyLinkedNode_T:
         """
         Moves cursor to the previous node, and returns it. Does nothing if
@@ -131,6 +159,12 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
         self._check_empty()
         if self._curr != self._tail: self._curr = self._curr.next
         return self._curr
+
+    def has_next(self) -> bool:
+        """
+        :return: ``True`` iff the current node has a next node.
+        """
+        return self._curr.next is not None
 
     def last(self) -> DoublyLinkedNode_T:
         """
