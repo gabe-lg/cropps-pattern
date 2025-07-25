@@ -3,13 +3,15 @@ import numpy as np
 import os
 import threading
 import tkinter as tk
+import queue
 import src.history
-import src.searcher
+import src.line_tracers
 from argparse import ArgumentError
 from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
 from lib.point import Point
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from src.line_tracers import LineTracerTypes as ltt
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageFile, ImageTk
 
@@ -35,6 +37,9 @@ class ImageViewer(tk.Tk):
         self.bind('<Right>', lambda _: self.next_image())
         self.bind('<Home>', lambda _: self.first_image())
         self.bind('<End>', lambda _: self.last_image())
+
+        self.mouse_coor = queue.LifoQueue()
+        self.bind('<Motion>', lambda e: self.on_motion(e))
 
         # paned window
         self.main_pane = tk.PanedWindow(self, orient="horizontal")
@@ -66,7 +71,11 @@ class ImageViewer(tk.Tk):
         # image label
         self.image_label = tk.Label(self.content_frame)
         self.image_label.pack(expand=True, fill='both', padx=10, pady=10)
-        self.image_label.bind('<Button-1>', self.on_click)
+        self.button_down = False
+        self.image_label.bind('<Button-1>', lambda e:
+        [self.on_click(e), setattr(self, "button_down", True)])
+        self.image_label.bind('<ButtonRelease-1>',
+                              lambda _: setattr(self, "button_down", False))
 
         # bottom button frame
         self.button_frame = tk.Frame(self)
@@ -121,6 +130,7 @@ class ImageViewer(tk.Tk):
                       command=self.cancel_search))
         self.cancel_search_button.pack(side='left', padx=5)
 
+        ###
         self.pause_button = (
             tk.Button(self.button_frame, text="Pause",
                       command=lambda:
@@ -133,6 +143,21 @@ class ImageViewer(tk.Tk):
                       threading.Thread(target=self._play).start()))
         self.play_button.pack(side='right', padx=5)
 
+        self.line_tracer_button = tk.Menubutton(self.button_frame,
+                                                text="Change Tool...")
+        self.line_tracer_menu = tk.Menu(self.line_tracer_button, tearoff=0)
+        self.line_tracer_button.config(menu=self.line_tracer_menu)
+        self.line_tracer_menu.add_command(
+            label="Straight line tool",
+            command=lambda: self.line_tracers.set_curr_type(ltt.LINE))
+        self.line_tracer_menu.add_command(
+            label="Freehand tool",
+            command=lambda: self.line_tracers.set_curr_type(ltt.FREE))
+        self.line_tracer_menu.add_command(
+            label="Brightest path searcher",
+            command=lambda: self.line_tracers.set_curr_type(ltt.BRIGHTEST))
+        self.line_tracer_button.pack(side='right', padx=5)
+
         self.image_list = ImageList()
         self.curr_image = None
         self.orig_image = None
@@ -140,7 +165,7 @@ class ImageViewer(tk.Tk):
 
         self.playing = False
         self.searching = 0
-        self.searcher = src.searcher.Searcher(self.lock)
+        self.line_tracers = src.line_tracers.LineTracers(ltt.LINE)
         self.history = src.history.PointsList()
 
         self.brightness_canvas = None
@@ -202,7 +227,7 @@ class ImageViewer(tk.Tk):
                         (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif",
                          ".tiff"))])])
         else:
-            self.image_list.push(ImageNode((Image.open(file_path), 0)))
+            self.image_list.push(ImageNode(Image.open(file_path)))
 
         # Open and display the image
         self.image_list.init()  # navigate to the start of the list
@@ -249,7 +274,7 @@ class ImageViewer(tk.Tk):
         )
         if file_path:
             try:
-                image.save(file_path)
+                image.save(file_path, "I;16")
                 messagebox.showinfo("Success", "Image saved at"
                                                f"\n{file_path}\n"
                                                "successfully.")
@@ -275,7 +300,7 @@ class ImageViewer(tk.Tk):
     def cancel_search(self):
         with self.lock:
             self.searching = 0
-            self.searcher.canceled = True
+            # self.searcher.canceled = True
             self._config_button()
 
         # Find the last line entry and restore to that state
@@ -322,6 +347,18 @@ class ImageViewer(tk.Tk):
                 args=(np.array(self.orig_image[0]), action_node),
                 daemon=True).start()
 
+    def on_motion(self, event):
+        if self.line_tracers.curr_type != ltt.FREE: return
+
+        if not self.button_down:
+            self.mouse_coor.put(Point(np.inf, np.inf))
+            return
+
+        try:
+            self.mouse_coor.put(Point(*self._get_coor(event)[:2]))
+        except ArgumentError:
+            pass
+
     def _change_image(self, image: ImageFile.ImageFile):
         # Resize image if it's too large (maintaining aspect ratio)
         display_size = (800, 600)  # Maximum display size
@@ -354,7 +391,7 @@ class ImageViewer(tk.Tk):
             self.undo_button.configure(state='disabled')
 
         if self.history.has_next() and not (self.searching
-                or self.playing):
+                                            or self.playing):
             self.redo_button.configure(state='normal')
         else:
             self.redo_button.configure(state='disabled')
@@ -384,6 +421,7 @@ class ImageViewer(tk.Tk):
 
     def _draw(self):
         data = np.array(self.image_list.peek().value)
+        data = data / data.max() * 255
 
         for circle in self.history.get_circles():
             cv2.circle(data, circle, CIR_SIZE, (0, 0, 0), -1)
@@ -427,13 +465,19 @@ class ImageViewer(tk.Tk):
         return x, y, image
 
     def _search(self, orig_image, action_node):
+        print("")
+        if self.line_tracers.curr_type == ltt.FREE:
+            while self.button_down: print("")
+
         try:
-            if not action_node.prev.value: return
-            line = self.searcher.search(action_node.prev.value.point,
-                                        action_node.value.point,
-                                        np.array(orig_image))
+            if (not action_node.prev.value and
+                    self.line_tracers.curr_type != ltt.FREE): return
+            line = self.line_tracers.get_line_tracer.trace(
+                action_node.prev.value.point if action_node.prev.value else None,
+                action_node.value.point, np.array(orig_image), self.mouse_coor)
+
             with self.lock:
-                if line and not self.searcher.canceled:
+                if line:  # and not self.searcher.canceled:
                     data = np.array(self.image_list.peek().value.copy())
                     cv2.polylines(data, [np.array(line)], False, (0, 0, 0),
                                   LINE_WIDTH)

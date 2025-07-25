@@ -26,8 +26,8 @@ class SearchTest(unittest.TestCase):
 
             img = Image.new('L', (size, size), 0)
             self._push_to_searcher(searcher, orig, dest)
-            line = searcher.search(np.zeros((size, size), dtype=np.uint8),
-                                   np.array(img))
+            line = searcher.trace(np.zeros((size, size), dtype=np.uint8),
+                                  np.array(img))
             self.assertEqual(abs(dest.y - orig.y) + abs(dest.x - orig.x) + 1,
                              len(line))
 
@@ -47,8 +47,8 @@ class SearchTest(unittest.TestCase):
             img = Image.fromarray(data)
             self._push_to_searcher(searcher, Point(0, 0),
                                    Point(size - 1, size - 1))
-            line = searcher.search(np.zeros((size, size), dtype=np.uint8),
-                                   np.array(img))
+            line = searcher.trace(np.zeros((size, size), dtype=np.uint8),
+                                  np.array(img))
 
             for j in range(size):
                 self.assertTrue((j, j) in line)
@@ -74,11 +74,11 @@ class SearchTest(unittest.TestCase):
                     pos, path = stack.pop()
                     if pos == end:
                         for p in path:
-                            data[*p._] = random.randint(128, 255)
+                            data[*p.t] = random.randint(128, 255)
                         with (lock):
                             searcher.clear()
                             self._push_to_searcher(searcher, start, end)
-                            result = (searcher.search(np.zeros_like(data), data)
+                            result = (searcher.trace(np.zeros_like(data), data)
                             [::-1])
                             if (not result or len(path) != len(result) or
                                 path != result):

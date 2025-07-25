@@ -1,18 +1,11 @@
-import cv2
 import heapq
 import numpy as np
-from lib.doubly_linked_list import DoublyLinkedList, T
-from lib.point import LineNode, Point, PointNode
+from lib.point import Point
+from src.line_tracer import LineTracer
 from typing import List, Optional, Tuple
 
 
-class PointList(DoublyLinkedList[PointNode]): pass
-
-
-class LineList(DoublyLinkedList[LineNode]): pass
-
-
-class Searcher:
+class Searcher(LineTracer):
     """
     Stores points using a stack, then searches for the brightest and shortest
     path between the last two points.
@@ -23,12 +16,11 @@ class Searcher:
     :ivar all_lines: A ``DoublyLinkedList`` of lines returned by searcher
     """
 
-    def __init__(self, lock):
+    def __init__(self):
+        super().__init__()
         self.canceled = False
-        self._lock = lock
-        self._cleared_count = 0
 
-    def search(self, orig: Point, dest: Point, data: np.ndarray) \
+    def trace(self, orig: Point, dest: Point, data: np.ndarray, *args) \
             -> Optional[List[Tuple[int, int]]]:
         """
         Returns the shortest path between ``orig = self.clicks[-2]`` and
@@ -55,7 +47,7 @@ class Searcher:
         # init
         visited = np.full((height, width), False)
         distances = np.full((height, width), float('inf'))
-        distances[*orig._] = 0
+        distances[*orig.t] = 0
         predecessors = np.full((height, width, 2), -1, dtype=int)
         pq = [(0, orig)]  # binary heap: (dist, node)
 
@@ -65,8 +57,8 @@ class Searcher:
                 return None
 
             curr_dist, curr = heapq.heappop(pq)
-            if visited[*curr._]: continue
-            visited[*curr._] = True
+            if visited[*curr.t]: continue
+            visited[*curr.t] = True
             if curr == dest: break
 
             for step in steps:
@@ -75,11 +67,11 @@ class Searcher:
 
                 # use inverse brightness as weight
                 new_weight = curr_dist + self._calc_weight(float(
-                    data[*neighbor._]))
+                    data[*neighbor.t]))
 
-                if distances[*neighbor._] > new_weight:
-                    distances[*neighbor._] = new_weight
-                    predecessors[*neighbor._] = curr.x, curr.y
+                if distances[*neighbor.t] > new_weight:
+                    distances[*neighbor.t] = new_weight
+                    predecessors[*neighbor.t] = curr.x, curr.y
                     heapq.heappush(pq, (new_weight, neighbor))
 
         # reconstruct path
@@ -87,7 +79,7 @@ class Searcher:
         curr = dest
         while curr != orig:
             path.append(curr)
-            curr = Point(*predecessors[*curr._])
+            curr = Point(*predecessors[*curr.t])
             if curr == Point(-1, -1):
                 print("Searcher: Path broken, no predecessor found")
                 return None

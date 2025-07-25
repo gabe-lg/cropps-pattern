@@ -12,7 +12,7 @@ class Point(tuple):
       >>> p + Point(3, 4)
       Point(4, 6)
 
-      >>> p._
+      >>> p.t
       tuple(2, 1)
     """
 
@@ -25,10 +25,15 @@ class Point(tuple):
     def y(self) -> int: return self[1]
 
     @property
-    def _(self): return self.y, self.x
+    def t(self) -> "Point": return Point(self.y, self.x)
 
     def __add__(self, other: "Point") -> "Point":
         return Point(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other: "Point") -> "Point":
+        return Point(self.x - other.x, self.y - other.y)
+
+    def __abs__(self) -> "Point": return Point(abs(self.x), abs(self.y))
 
     def out_of_bounds(self, corner: "Point") -> bool:
         """
