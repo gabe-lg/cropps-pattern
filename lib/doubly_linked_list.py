@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from typing import Iterable, Optional, TypeVar, List, Generator
+from typing import Generic, Iterable, Optional, TypeVar, List, Generator
 
 T = TypeVar('T')
 
 
 @dataclass
-class DoublyLinkedNode[T]:
+class DoublyLinkedNode(Generic[T]):
     """
     Graph::
 
@@ -26,8 +26,8 @@ class DoublyLinkedNode[T]:
     def __str__(self):
         return (f"{type(self)}:\n-----\n"
                 f"Value:{self.value}\n"
-                f"Prev is {"not " if self.prev else ""}None\n"
-                f"Next is {"not " if self.next else ""}None\n"
+                f"Prev is {'not ' if self.prev else ''}None\n"
+                f"Next is {'not ' if self.next else ''}None\n"
                 f"Child:{self.child}\n\n")
 
 
@@ -69,7 +69,7 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
             yield curr
             curr = curr.prev
 
-    def iter_list(self, indices: List[int]) -> Generator[DoublyLinkedNode_T]:
+    def iter_list(self, indices: List[int]) -> Generator[DoublyLinkedNode_T, None, None]:
         """
         A generator yielding nodes corresponding to the specified indices
         in the linked list.
