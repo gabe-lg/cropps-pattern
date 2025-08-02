@@ -57,6 +57,8 @@ class ImageViewer(tk.Tk):
         self.brightness_graph_frame.pack(fill='both',
                                          expand=True, padx=20, pady=20)
 
+        self.brightness_graph_frame.bind('<MouseWheel>', self.on_scroll_graph)
+
         # left button frame
         self.left_button_frame = tk.Frame(self.content_frame, bd=2,
                                           relief='groove')
@@ -131,6 +133,13 @@ class ImageViewer(tk.Tk):
         self.cancel_search_button.pack(side='left', padx=5)
 
         ###
+        self.brightness_slider = tk.Scale(self.button_frame, from_=0, to=1000,
+                                          orient='horizontal',
+                                          label="Brightness",
+                                          command=lambda _: self._draw())
+        self.brightness_slider.set(100)
+        self.brightness_slider.pack(side='left', padx=5)
+
         self.pause_button = (
             tk.Button(self.button_frame, text="Pause",
                       command=lambda:
@@ -157,6 +166,15 @@ class ImageViewer(tk.Tk):
             label="Brightest path searcher",
             command=lambda: self.line_tracers.set_curr_type(ltt.BRIGHTEST))
         self.line_tracer_button.pack(side='right', padx=5)
+
+        self.y_slider = tk.Scale(self.button_frame, from_=1,
+                                 to=np.iinfo(np.uint16).max,
+                                 orient='horizontal',
+                                 label="y-axis upper limit",
+                                 length=200,
+                                 command=lambda _: self._set_ylim_graph())
+        self.y_slider.set(1023)
+        self.y_slider.pack(side='right', padx=5)
 
         self.image_list = ImageList()
         self.curr_image = None
@@ -219,13 +237,14 @@ class ImageViewer(tk.Tk):
         # push images to list
         if is_folder:
             self.image_list.push_all(
-                [f[1] for f in sorted(
-                    [(os.path.getmtime(os.path.join(file_path, f)),
-                      ImageNode(Image.open(os.path.join(file_path, f))))
-                     for f in os.listdir(file_path)
+                [ImageNode(Image.open(os.path.join(file_path, f)))
+                 for i, f in enumerate(sorted(
+                    [f for f in os.listdir(file_path)
                      if f.lower().endswith(
                         (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif",
-                         ".tiff"))])])
+                         ".tiff"))],
+                    key=lambda x: os.path.getmtime(os.path.join(file_path, x))))
+                 ])
         else:
             self.image_list.push(ImageNode(Image.open(file_path)))
 
@@ -359,6 +378,13 @@ class ImageViewer(tk.Tk):
         except ArgumentError:
             pass
 
+    def on_scroll_graph(self, event):
+        if event.delta > 0:
+            self.y_slider.set(self.y_slider.get() + 10)
+        else:
+            self.y_slider.set(self.y_slider.get() - 10)
+        self._plot_brightness()
+
     def _change_image(self, image: ImageFile.ImageFile):
         # Resize image if it's too large (maintaining aspect ratio)
         display_size = (800, 600)  # Maximum display size
@@ -411,17 +437,32 @@ class ImageViewer(tk.Tk):
         if self.playing:
             self.play_button.configure(state='disabled')
             self.pause_button.configure(state='normal')
+
+            self.brightness_slider.configure(state='disabled')
+            self.y_slider.configure(state='disabled')
+            self.line_tracer_button.configure(state='disabled')
         else:
             self.play_button.configure(state='normal')
             self.pause_button.configure(state='disabled')
 
+            self.brightness_slider.configure(state='normal')
+            self.y_slider.configure(state='normal')
+            self.line_tracer_button.configure(state='normal')
+
         if self.image_list.is_empty() or self.searching or self.image_list.curr_at_tail():
-            self.play_button.configure(state='disabled')
+            if self.image_list.curr_at_tail():
+                self.play_button.configure(state='normal')
+            else:
+                self.play_button.configure(state='disabled')
             self.pause_button.configure(state='disabled')
 
     def _draw(self):
+        if self.image_list.is_empty(): return
+
+        brightness = self.brightness_slider.get() / 100
         data = np.array(self.image_list.peek().value)
-        data = data / data.max() * 255
+        max_data = data.max() if data.max() else 1
+        data = np.clip(data / max_data * 255 * brightness, 0, 255)
 
         for circle in self.history.get_circles():
             cv2.circle(data, circle, CIR_SIZE, (0, 0, 0), -1)
@@ -491,9 +532,19 @@ class ImageViewer(tk.Tk):
                 self.searching -= 1
                 self._config_button()
 
+    def _set_ylim_graph(self):
+        if not self.image_list.is_empty():
+            data = np.array(self.image_list.peek().value)
+            self.after_idle(self._plot_brightness, data)
+
     def _play(self):
         self.playing = True
         self._config_button()
+
+        if self.image_list.curr_at_tail():
+            # play from beginning
+            self.image_list.init()
+
         while self.playing and not self.image_list.curr_at_tail():
             self.next_image()
         self.playing = False
@@ -512,14 +563,20 @@ class ImageViewer(tk.Tk):
                 fig, master=self.brightness_graph_frame)
             self.brightness_canvas.get_tk_widget().pack(
                 fill="both", expand=True)
+            fig.tight_layout(pad=2)
 
         fig, ax = self.graph
         ax.clear()
-        fig.tight_layout()
         ax.set_xlabel('Number of pixels from origin')
         ax.set_ylabel('Brightness')
         ax.set_title('Brightness Along Selected Line')
-        ax.set_ylim(0, 500)
+
+        ylim = self.y_slider.get()
+        if ylim is not None:
+            ax.set_ylim(0, ylim)
+        else:
+            ax.set_ylim(0, 500)
+
         ax.plot(
             range(len(brightness_values)), brightness_values)
         self.brightness_canvas.draw()
