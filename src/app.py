@@ -2,15 +2,19 @@ import cv2
 import numpy as np
 import os
 import threading
+import time
 import tkinter as tk
 import queue
 import src.history
 import src.line_tracers
 from argparse import ArgumentError
+from datetime import datetime
 from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
 from lib.point import Point
 from matplotlib import pyplot as plt
+from matplotlib.backends.backend_pgf import PdfPages
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.cm import get_cmap
 from src.line_tracers import LineTracerTypes as ltt
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageFile, ImageTk
@@ -18,6 +22,7 @@ from PIL import Image, ImageFile, ImageTk
 SIZE_RATIO = 0.75
 CIR_SIZE = 3
 LINE_WIDTH = 2
+ANNOTATION_COLOR = (255, 0, 0)
 
 
 class ImageNode(DoublyLinkedNode[ImageFile.ImageFile]): pass
@@ -123,6 +128,11 @@ class ImageViewer(tk.Tk):
                                      command=self.save)
         self.save_button.pack(side='left', padx=5)
 
+        self.save_graphs_button = tk.Button(self.button_frame,
+                                            text="Save Graphs",
+                                            command=self.save_graphs)
+        self.save_graphs_button.pack(side='left', padx=5)
+
         self.clear_button = (
             tk.Button(self.button_frame, text="Clear", command=self.clear))
         self.clear_button.pack(side='left', padx=5)
@@ -132,7 +142,14 @@ class ImageViewer(tk.Tk):
                       command=self.cancel_search))
         self.cancel_search_button.pack(side='left', padx=5)
 
-        ###
+        self.image_slider = tk.Scale(self.button_frame, from_=1, to=1,
+                                     orient='horizontal',
+                                     label="Image number",
+                                     command=lambda
+                                         _: self._change_image_with_id())
+        self.image_slider.set(1)
+        self.image_slider.pack(side='left', padx=5)
+
         self.brightness_slider = tk.Scale(self.button_frame, from_=0, to=1000,
                                           orient='horizontal',
                                           label="Brightness",
@@ -140,6 +157,7 @@ class ImageViewer(tk.Tk):
         self.brightness_slider.set(100)
         self.brightness_slider.pack(side='left', padx=5)
 
+        ###
         self.pause_button = (
             tk.Button(self.button_frame, text="Pause",
                       command=lambda:
@@ -236,30 +254,31 @@ class ImageViewer(tk.Tk):
 
         # push images to list
         if is_folder:
-            self.image_list.push_all(
+            count = self.image_list.push_all(
                 [ImageNode(Image.open(os.path.join(file_path, f)))
-                 for i, f in enumerate(sorted(
+                 for f in sorted(
                     [f for f in os.listdir(file_path)
                      if f.lower().endswith(
                         (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif",
                          ".tiff"))],
-                    key=lambda x: os.path.getmtime(os.path.join(file_path, x))))
+                    key=lambda x: os.path.getmtime(os.path.join(file_path, x)))
                  ])
+
+            if count == 0:
+                self.image_label.configure(image=tk.PhotoImage())
+                messagebox.showerror("Open folder",
+                                     "This folder does not contain any image files.")
+                return
+
+            self.image_slider.config(to=count)
         else:
             self.image_list.push(ImageNode(Image.open(file_path)))
 
-        # Open and display the image
-        self.image_list.init()  # navigate to the start of the list
-        try:
-            image = self.image_list.next().value
-        except IndexError:
-            self.image_label.configure(image=tk.PhotoImage())
-            messagebox.showerror("Open folder",
-                                 "This folder does not contain any image files.")
-            return
+        # Ensure every image has been opened, so program doesn't have to open
+        # it during runtime
+        while not self.image_list.curr_at_first():
+            self._change_image(self.image_list.prev().value)
 
-        # Update the label with new image
-        self._change_image(image)
         self.cancel_search()
         self._config_button()
 
@@ -300,6 +319,44 @@ class ImageViewer(tk.Tk):
             except OSError as e:
                 messagebox.showerror("Error", "An error occurred while saving:"
                                               f"\n{str(e)}")
+
+    def save_graphs(self):
+        self.searching += 1
+        self._config_button()
+
+        if not os.path.exists('saves'): os.mkdir('saves')
+
+        try:
+            with (PdfPages('saves/graph '
+                           f'{datetime.now().strftime("%Y%m%d %H%M%S")}.pdf')
+                  as pdf):
+                for i, image in enumerate(self.image_list):
+                    plt.figure()
+
+                    data = np.array(image.value)
+                    data = np.mean(data, axis=2) if len(
+                        data.shape) == 3 else data
+
+                    brightness_values = [data[p[1], p[0]] for l in
+                                         self.history.get_lines()
+                                         for p in l][::-1]
+
+                    plt.xlabel('Number of pixels from origin')
+                    plt.ylabel('Brightness')
+                    plt.title(
+                        f'Brightness Along Selected Line in Image {i + 1}')
+                    plt.plot(
+                        range(len(brightness_values)), brightness_values)
+
+                    pdf.savefig()
+                    plt.close()
+        except RuntimeError as e:
+            messagebox.showerror(
+                "Error", f"An error occurred while saving graphs:\n{str(e)}")
+
+        messagebox.showinfo("Success", "Graphs saved successfully.")
+        self.searching -= 1
+        self._config_button()
 
     # def to_csv(self):
     #     for image in self.image_list:
@@ -394,6 +451,10 @@ class ImageViewer(tk.Tk):
         self._draw()
         self._config_button()
 
+    def _change_image_with_id(self):
+        i = self.image_slider.get()
+        self._change_image(self.image_list.goto(int(i) - 1).value)
+
     def _config_button(self):
         if (self.image_list.curr_at_first() or self.image_list.is_empty()
                 or self.playing):
@@ -462,11 +523,14 @@ class ImageViewer(tk.Tk):
         brightness = self.brightness_slider.get() / 100
         data = np.array(self.image_list.peek().value)
         max_data = data.max() if data.max() else 1
-        data = np.clip(data / max_data * 255 * brightness, 0, 255)
+        data = np.clip(data / max_data * brightness, 0, 1)
+
+        # Add color
+        data = (get_cmap('viridis')(data)[:, :, :3] * 255).astype(np.uint8)
 
         for circle in self.history.get_circles():
-            cv2.circle(data, circle, CIR_SIZE, (0, 0, 0), -1)
-        cv2.polylines(data, self.history.get_lines(), False, (0, 0, 0),
+            cv2.circle(data, circle, CIR_SIZE, ANNOTATION_COLOR, -1)
+        cv2.polylines(data, self.history.get_lines(), False, ANNOTATION_COLOR,
                       LINE_WIDTH)
 
         image = Image.fromarray(data)
@@ -520,8 +584,8 @@ class ImageViewer(tk.Tk):
             with self.lock:
                 if line:  # and not self.searcher.canceled:
                     data = np.array(self.image_list.peek().value.copy())
-                    cv2.polylines(data, [np.array(line)], False, (0, 0, 0),
-                                  LINE_WIDTH)
+                    cv2.polylines(data, [np.array(line)], False,
+                                  ANNOTATION_COLOR, LINE_WIDTH)
 
                     # Store result in stack
                     action_node.value.line = line

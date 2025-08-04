@@ -93,8 +93,19 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
         value.prev = self._curr
         self._tail = self._curr = value
 
-    def push_all(self, values: Iterable[T]):
-        for value in values: self.push(value)
+    def push_all(self, values: Iterable[T]) -> int:
+        """
+        Push all elements from ``values`` into the list. Preserves the order of
+        elements in ``values``.
+
+        :param values: An iterable of elements to be pushed.
+        :return: The number of elements pushed.
+        """
+        count = 0
+        for value in values:
+            self.push(value)
+            count += 1
+        return count
 
     def clear(self):
         self._tail = self._curr = self._init
