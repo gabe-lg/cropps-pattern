@@ -34,7 +34,7 @@ class StraightLineTracer(LineTracer):
                 err += dx
                 orig += Point(0, sy)
             points.append(orig)
-        return points
+        return points[::-1]
 
 
 class FreehandLineTracer(LineTracer):

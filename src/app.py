@@ -2,9 +2,9 @@ import cv2
 import numpy as np
 import os
 import threading
-import time
 import tkinter as tk
 import queue
+import src.graph_analyzer
 import src.history
 import src.line_tracers
 from argparse import ArgumentError
@@ -170,6 +170,23 @@ class ImageViewer(tk.Tk):
                       threading.Thread(target=self._play).start()))
         self.play_button.pack(side='right', padx=5)
 
+        ###
+        self.recalc_button = tk.Button(self.button_frame,
+                                       text="Recalculate Wavefront",
+                                       command=self.recalc_max_brightness)
+        self.recalc_button.pack(side='right', padx=5)
+
+        self.analyzer_button = tk.Menubutton(self.button_frame,
+                                             text="Change Analyzing Method...")
+        self.analyzer_menu = tk.Menu(self.analyzer_button, tearoff=0)
+        self.analyzer_button.config(menu=self.analyzer_menu)
+        self.analyzer_menu.add_command(
+            label="Moving Average",
+            command=None)
+        self.analyzer_menu.add_command(label="Settings...",
+                                       command=self.show_analyzer_menu)
+        self.analyzer_button.pack(side='right', padx=5)
+
         self.line_tracer_button = tk.Menubutton(self.button_frame,
                                                 text="Change Tool...")
         self.line_tracer_menu = tk.Menu(self.line_tracer_button, tearoff=0)
@@ -203,6 +220,7 @@ class ImageViewer(tk.Tk):
         self.searching = 0
         self.line_tracers = src.line_tracers.LineTracers(ltt.LINE)
         self.history = src.history.PointsList()
+        self.graph_analyzer = src.graph_analyzer.GraphAnalyzer()
 
         self.brightness_canvas = None
         self.graph = None
@@ -387,6 +405,29 @@ class ImageViewer(tk.Tk):
         #     # if it is not a line, undo
         #     self._undo()
 
+    def show_analyzer_menu(self):
+        slider_win = tk.Toplevel(self)
+        slider_win.title("Adjust value")
+        tk.Label(slider_win, text="Window size:").pack()
+        slider = tk.Scale(slider_win, from_=0, to=50, orient='horizontal',
+                          command=lambda _: [
+                              setattr(self.graph_analyzer, "window_size",
+                                      slider.get()), self._plot_brightness(
+                                  np.array(self.orig_image[0]))])
+        slider.set(20)
+        slider.pack()
+        tk.Button(slider_win, text="Close", command=slider_win.destroy).pack()
+
+    def recalc_max_brightness(self):
+        brightness_values = []
+        for node in self.image_list:
+            data = np.array(node.value)
+            brightness_values.append(self.graph_analyzer.moving_average(
+                [data[p[1], p[0]] for l in self.history.get_lines()
+                 for p in l][::-1]))
+        print(self.graph_analyzer.max_sum(brightness_values))
+        self._plot_brightness(np.array(self.orig_image[0]))
+
     def prev_image(self):
         if not self.image_list.curr_at_first():
             self._change_image(self.image_list.prev().value)
@@ -417,6 +458,8 @@ class ImageViewer(tk.Tk):
         self._draw()
         self._config_button()
 
+        self.graph_analyzer.last = None
+
         if self.searching:
             threading.Thread(
                 target=self._search,
@@ -440,7 +483,7 @@ class ImageViewer(tk.Tk):
             self.y_slider.set(self.y_slider.get() + 10)
         else:
             self.y_slider.set(self.y_slider.get() - 10)
-        self._plot_brightness()
+        self._plot_brightness(np.array(self.orig_image[0]))
 
     def _change_image(self, image: ImageFile.ImageFile):
         # Resize image if it's too large (maintaining aspect ratio)
@@ -619,6 +662,9 @@ class ImageViewer(tk.Tk):
 
         brightness_values = [data[p[1], p[0]] for l in self.history.get_lines()
                              for p in l][::-1]
+        if not brightness_values: return
+
+        moving_average = self.graph_analyzer.moving_average(brightness_values)
 
         if self.brightness_canvas is None:
             # First time: create figure and canvas
@@ -643,4 +689,10 @@ class ImageViewer(tk.Tk):
 
         ax.plot(
             range(len(brightness_values)), brightness_values)
+        ax.plot(range(len(moving_average)), moving_average)
+
+        # plot wavefront
+        if self.graph_analyzer.last:
+            plt.axvline(x=self.graph_analyzer.last[self.image_list.curr_id][1], color='red')
+
         self.brightness_canvas.draw()

@@ -85,6 +85,15 @@ class DoublyLinkedList(Iterable[DoublyLinkedNode_T]):
             curr_id += index
             yield curr
 
+    @property
+    def curr_id (self):
+        curr = self._init
+        curr_id = -1
+        while curr != self._curr:
+            curr = curr.next
+            curr_id += 1
+        return curr_id
+
     def is_empty(self) -> bool:
         return not self._init.next
 
