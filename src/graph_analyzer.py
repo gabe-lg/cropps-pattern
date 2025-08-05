@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.signal import convolve2d
 
 
 class GraphAnalyzer:
@@ -29,6 +30,21 @@ class GraphAnalyzer:
             raise ValueError(f"{target_x} is too close to the boundaries")
         dy_dx = (y[idx + 1] - y[idx - 1]) / (x[idx + 1] - x[idx - 1])
         return dy_dx
+
+    @staticmethod
+    def take_avg(image, radius) -> np.ndarray:
+        size = radius * 2 + 1
+        center = radius
+        y, x = np.ogrid[:size, :size]
+        mask = (x - center) ** 2 + (y - center) ** 2 <= radius ** 2
+
+        kernel = np.zeros((size, size))
+        kernel[mask] = 1
+        kernel /= kernel.sum()  # normalize so it's an average
+
+        # Convolve image with circular (disk-like) kernel
+        avg_image = convolve2d(image, kernel, mode='same', boundary='symm')
+        return avg_image
 
     def max_sum(self, l):
         """
