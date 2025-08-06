@@ -4,12 +4,13 @@ import tkinter as tk
 class Settings:
     def __init__(self):
         # Class attributes
+        self.hide_lines = False
         self.line_thickness = 1
         self.circle_radius = 3
         self.circle_color = (255, 0, 0)
         self.line_color = (255, 0, 0)
         self.area_color = (255, 0, 0)
-        self.weight_factor = 2
+        self.weight_factor = 0.
         self.closed = True
 
     def show_window(self, root):
@@ -19,6 +20,15 @@ class Settings:
         self.window.title("Settings")
         self.window.resizable(False, False)
 
+        tk.Label(self.window, text="Settings").pack()
+
+        self.hide_lines_button = (
+            tk.Button(self.window, text="Show/Hide Lines",
+                      command=lambda: setattr(
+                          self, "hide_lines", not self.hide_lines)))
+        self.hide_lines_button.pack()
+
+        tk.Label(self.window, text="Circle color").pack()
         tk.Label(self.window, text="Line thickness").pack()
         self.line_slider = tk.Scale(self.window, from_=1, to=10,
                                     orient='horizontal',
@@ -34,8 +44,6 @@ class Settings:
                                       setattr(self, "circle_radius", int(val)))
         self.circle_slider.set(self.circle_radius)
         self.circle_slider.pack()
-
-        tk.Label(self.window, text="Circle color").pack()
 
         tk.Label(self.window, text="R").pack()
         self.circle_r_slider = tk.Scale(self.window, from_=0, to=255,
@@ -101,7 +109,7 @@ class Settings:
         self.circle_b_slider.pack()
 
         tk.Label(self.window, text="Weight factor (wavefront)").pack()
-        self.weight_factor_slider = tk.Scale(self.window, from_=1., to=3.,
+        self.weight_factor_slider = tk.Scale(self.window, from_=0., to=3.,
                                              resolution=0.1,
                                              orient='horizontal',
                                              command=lambda val:

@@ -136,13 +136,6 @@ class ImageViewer(tk.Tk):
             tk.Button(self.button_frame, text="Clear", command=self.clear))
         self.clear_button.pack(side='left', padx=5)
 
-        self.hide_lines_button = (
-            tk.Button(self.button_frame, text="Show/Hide Lines",
-                      command=lambda: [setattr(
-                          self, "hide_lines", not self.hide_lines),
-                          self._draw()]))
-        self.hide_lines_button.pack(side='left', padx=5)
-
         self.cancel_search_button = (
             tk.Button(self.button_frame, text="Cancel Search",
                       command=self.cancel_search))
@@ -191,16 +184,20 @@ class ImageViewer(tk.Tk):
         self.analyzer_menu = tk.Menu(self.analyzer_button, tearoff=0)
         self.analyzer_button.config(menu=self.analyzer_menu)
         self.analyzer_menu.add_command(
-            label="Moving Average",
+            label="Gradient of Moving Average",
             command=lambda: [setattr(self.graph_analyzer, "mode", 0),
                              self._plot_brightness()])
         self.analyzer_menu.add_command(
-            label="Moving Average * Gradient",
+            label="Moving Average",
             command=lambda: [setattr(self.graph_analyzer, "mode", 1),
+                             self._plot_brightness()])
+        self.analyzer_menu.add_command(
+            label="Moving Average * Gradient",
+            command=lambda: [setattr(self.graph_analyzer, "mode", 2),
                              self._plot_brightness()])
         self.analyzer_menu.add_command(label="Gaussian filter",
                                        command=lambda: [setattr(
-                                           self.graph_analyzer, "mode", 2),
+                                           self.graph_analyzer, "mode", 3),
                                            self._plot_brightness()])
         self.analyzer_menu.add_command(label="Settings...",
                                        command=self.show_analyzer_menu)
@@ -717,7 +714,12 @@ class ImageViewer(tk.Tk):
     def _get_wavefront(self):
         if not self.graph_analyzer.last: return None
 
-        return self.graph_analyzer.last[self.image_list.curr_id][1]
+        try:
+            return self.graph_analyzer.last[self.image_list.curr_id][1]
+        except IndexError as e:
+            print("Error", "An error occurred while calculating the "
+                           f"wavefront:\n{str(e)}")
+            return None
 
     def _search(self, orig_image, action_node):
         print("")
@@ -802,13 +804,17 @@ class ImageViewer(tk.Tk):
         ax.plot(
             range(len(brightness_values)), brightness_values)
 
-        error = self.graph_analyzer.window_size // 2 if self.graph_analyzer.mode == 0 else 0
+        error = self.graph_analyzer.window_size // 2 if self.graph_analyzer.mode != 3 else 0
         ax.plot(
             range(error, len(moving_average) + error), moving_average)
 
         # plot wavefront
-        if self.graph_analyzer.last:
-            x = self._get_wavefront()
-            plt.axvline(x, color='red')
+        try:
+            if self.graph_analyzer.last:
+                x = self._get_wavefront()
+                plt.axvline(x, color='red')
+        except TypeError as e:
+            print("Error", "An error occurred while plotting the vertical "
+                           f"line:\n{str(e)}")
 
         self.brightness_canvas.draw()
