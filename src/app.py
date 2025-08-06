@@ -1,24 +1,26 @@
-import cv2
-import numpy as np
 import os
+import queue
 import threading
 import tkinter as tk
-import queue
-import src.graph_analyzer
-import src.history
-import src.line_tracers
-import src.settings
 from argparse import ArgumentError
 from datetime import datetime
-from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
-from lib.point import Point
+from tkinter import filedialog, messagebox
+
+import cv2
+import numpy as np
+from PIL import Image, ImageFile, ImageTk
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pgf import PdfPages
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.cm import get_cmap
+
+import src.graph_analyzer
+import src.history
+import src.line_tracers
+import src.settings
+from lib.doubly_linked_list import DoublyLinkedList, DoublyLinkedNode
+from lib.point import Point
 from src.line_tracers import LineTracerTypes as ltt
-from tkinter import filedialog, messagebox
-from PIL import Image, ImageFile, ImageTk
 
 SIZE_RATIO = 0.75
 
@@ -184,7 +186,12 @@ class ImageViewer(tk.Tk):
         self.analyzer_button.config(menu=self.analyzer_menu)
         self.analyzer_menu.add_command(
             label="Moving Average",
-            command=None)
+            command=lambda: [setattr(self.graph_analyzer, "mode", 0),
+                             self._plot_brightness()])
+        self.analyzer_menu.add_command(label="Gaussian filter",
+                                       command=lambda: [setattr(
+                                           self.graph_analyzer, "mode", 1),
+                                           self._plot_brightness()])
         self.analyzer_menu.add_command(label="Settings...",
                                        command=self.show_analyzer_menu)
         self.analyzer_button.pack(side='right', padx=5)
@@ -220,6 +227,7 @@ class ImageViewer(tk.Tk):
 
         self.playing = False
         self.searching = 0
+        self.max_brightness = 1
         self.line_tracers = src.line_tracers.LineTracers(ltt.LINE)
         self.history = src.history.PointsList()
         self.graph_analyzer = src.graph_analyzer.GraphAnalyzer()
@@ -295,10 +303,17 @@ class ImageViewer(tk.Tk):
         else:
             self.image_list.push(ImageNode(Image.open(file_path)))
 
+        self.max_brightness = 1
+        for node in self.image_list:
+            self.max_brightness = max(np.max(np.array(node.value)),
+                                      self.max_brightness)
+
         # Ensure every image has been opened, so program doesn't have to open
         # it during runtime
         while not self.image_list.curr_at_first():
             self._change_image(self.image_list.prev().value)
+
+        self._change_image(self.image_list.peek().value)
 
         self.cancel_search()
         self._config_button()
@@ -415,22 +430,43 @@ class ImageViewer(tk.Tk):
     def show_analyzer_menu(self):
         slider_win = tk.Toplevel(self)
         slider_win.title("Adjust value")
+        tk.Label(slider_win, text="Moving Average:").pack()
         tk.Label(slider_win, text="Window size:").pack()
         slider = tk.Scale(slider_win, from_=0, to=50, orient='horizontal',
                           command=lambda _: [
                               setattr(self.graph_analyzer, "window_size",
                                       slider.get()), self._plot_brightness()])
-        slider.set(20)
+        slider.set(self.graph_analyzer.window_size)
         slider.pack()
+
+        tk.Label(slider_win, text="Gaussian filter:").pack()
+        tk.Label(slider_win, text="Standard deviation").pack()
+        slider1 = tk.Scale(slider_win, from_=0, to=50, orient='horizontal',
+                           command=lambda _: [
+                               setattr(self.graph_analyzer, "sigma",
+                                       slider.get()), self._plot_brightness()])
+        slider1.set(self.graph_analyzer.sigma)
+        slider1.pack()
+
         tk.Button(slider_win, text="Close", command=slider_win.destroy).pack()
 
     def recalc_max_brightness(self):
         brightness_values = []
         for node in self.image_list:
             data = np.array(node.value)
-            brightness_values.append(self._get_brightness_values(data))
-        print(self.graph_analyzer.max_sum(brightness_values))
+            data = self.graph_analyzer.take_avg(data,
+                                                self.settings.line_thickness)
+            data = self.graph_analyzer.moving_average(
+                self._get_brightness_values(data))
+            brightness_values.append(data)
+        self.graph_analyzer.max_sum(brightness_values,
+                                    self.settings.weight_factor)
+
+        self.graph_analyzer.line = \
+            [p for l in self.history.get_lines() for p in l][::-1]
+
         self._plot_brightness()
+        self._draw()
 
     def prev_image(self):
         if not self.image_list.curr_at_first():
@@ -573,8 +609,7 @@ class ImageViewer(tk.Tk):
 
         brightness = self.brightness_slider.get() / 100
         data = np.array(self.image_list.peek().value)
-        max_data = data.max() if data.max() else 1
-        data = np.clip(data / max_data * brightness, 0, 1)
+        data = np.clip(data / self.max_brightness * brightness, 0, 1)
 
         # Add color
         data = (get_cmap('viridis')(data)[:, :, :3] * 255).astype(np.uint8)
@@ -591,12 +626,12 @@ class ImageViewer(tk.Tk):
         line = [p for l in self.history.get_lines() for p in l][::-1]
         dist = self._get_wavefront()
         if line and dist:
-            print(line[dist], dist)
             x, y = line[dist]
             length = 10 * self.settings.line_thickness
 
-            cv2.rectangle(data, (x - length // 2, y - length // 2), (x + length // 2, y + length // 2),
-                          self.settings.line_color, 2 )
+            cv2.rectangle(data, (x - length // 2, y - length // 2),
+                          (x + length // 2, y + length // 2),
+                          self.settings.line_color, 2)
 
         image = Image.fromarray(data)
         photo = ImageTk.PhotoImage(image)  # Convert to PhotoImage
@@ -641,9 +676,7 @@ class ImageViewer(tk.Tk):
     def _get_wavefront(self):
         if not self.graph_analyzer.last: return None
 
-        return (self.graph_analyzer.window_size // 2 +
-                next((t for t in self.graph_analyzer.last if
-                      t[0] == self.image_list.curr_id), None)[1])
+        return self.graph_analyzer.last[self.image_list.curr_id][1]
 
     def _search(self, orig_image, action_node):
         print("")
@@ -728,7 +761,7 @@ class ImageViewer(tk.Tk):
         ax.plot(
             range(len(brightness_values)), brightness_values)
 
-        error = self.graph_analyzer.window_size // 2
+        error = self.graph_analyzer.window_size // 2 if self.graph_analyzer.mode == 0 else 0
         ax.plot(
             range(error, len(moving_average) + error), moving_average)
 
