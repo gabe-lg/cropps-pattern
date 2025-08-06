@@ -1,6 +1,7 @@
 import csv
 
 import numpy as np
+from tkinter import filedialog, messagebox
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import convolve2d
 
@@ -17,19 +18,21 @@ class GraphAnalyzer:
         """
         Compute the moving average of a 1D array using a specified window size.
         """
-        if self.mode == 0:
-            data = np.array(data)
-            if self.window_size < 1:
-                raise ValueError("window_size should be at least 1")
-            if self.window_size > len(data):
-                raise ValueError(
-                    "window_size should not be larger than the length of the data")
-            return list(
-                np.convolve(data, np.ones(self.window_size) / self.window_size,
-                            mode='valid'))
-
-        if self.mode == 1:
+        if self.mode == 2:
             return gaussian_filter1d(data, self.sigma)
+
+        data = np.array(data)
+        if self.window_size < 1:
+            raise ValueError("window_size should be at least 1")
+        if self.window_size > len(data):
+            raise ValueError(
+                "window_size should not be larger than the length of the data")
+        res = list(
+            np.convolve(data, np.ones(self.window_size) / self.window_size,
+                        mode='valid'))
+
+        if self.mode == 0: return res
+        if self.mode == 1: return res * - np.gradient(res)
 
         return data
 
@@ -68,12 +71,28 @@ class GraphAnalyzer:
         decreasing = tmp[0][::-1], tmp[1]
         res = np.array(max(increasing, decreasing, key=lambda x: x[1])[0])
         error = self.window_size // 2 if self.mode == 0 else 0
-        res = [(k[0], k[1] + error) for k in res]
+        res = [(k[0] + 1, k[1] + error) for k in res]
         self.last = res
 
-        with open('saves/output.csv', mode='w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerows(res)
+        try:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")])
+
+            if file_path:
+                with open(file_path, mode='w', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(("Image number",
+                                     "Number of pixels from origin"))
+                    writer.writerows(res)
+
+                messagebox.showinfo("Success", "Image saved at"
+                                               f"\n{file_path}\n"
+                                               "successfully.")
+
+        except OSError as e:
+            messagebox.showerror(
+                "Error", f"An error occurred while saving graphs:\n{str(e)}")
 
         return res
 

@@ -3,7 +3,6 @@ import queue
 import threading
 import tkinter as tk
 from argparse import ArgumentError
-from datetime import datetime
 from tkinter import filedialog, messagebox
 
 import cv2
@@ -124,18 +123,25 @@ class ImageViewer(tk.Tk):
             label="Open folder", command=lambda: self.open(is_folder=True))
         self.open_button.pack(side='left', padx=5)
 
-        self.save_button = tk.Button(self.button_frame, text="Save",
-                                     command=self.save)
+        self.save_button = tk.Menubutton(self.button_frame, text="Save...")
+        self.save_menu = tk.Menu(self.save_button, tearoff=0)
+        self.save_button.config(menu=self.save_menu)
+        self.save_menu.add_command(label="This image", command=self.save)
+        self.save_menu.add_command(label="All images", command=self.save_all)
+        self.save_menu.add_command(label="Save Graphs",
+                                   command=self.save_graphs)
         self.save_button.pack(side='left', padx=5)
-
-        self.save_graphs_button = tk.Button(self.button_frame,
-                                            text="Save Graphs",
-                                            command=self.save_graphs)
-        self.save_graphs_button.pack(side='left', padx=5)
 
         self.clear_button = (
             tk.Button(self.button_frame, text="Clear", command=self.clear))
         self.clear_button.pack(side='left', padx=5)
+
+        self.hide_lines_button = (
+            tk.Button(self.button_frame, text="Show/Hide Lines",
+                      command=lambda: [setattr(
+                          self, "hide_lines", not self.hide_lines),
+                          self._draw()]))
+        self.hide_lines_button.pack(side='left', padx=5)
 
         self.cancel_search_button = (
             tk.Button(self.button_frame, text="Cancel Search",
@@ -188,9 +194,13 @@ class ImageViewer(tk.Tk):
             label="Moving Average",
             command=lambda: [setattr(self.graph_analyzer, "mode", 0),
                              self._plot_brightness()])
+        self.analyzer_menu.add_command(
+            label="Moving Average * Gradient",
+            command=lambda: [setattr(self.graph_analyzer, "mode", 1),
+                             self._plot_brightness()])
         self.analyzer_menu.add_command(label="Gaussian filter",
                                        command=lambda: [setattr(
-                                           self.graph_analyzer, "mode", 1),
+                                           self.graph_analyzer, "mode", 2),
                                            self._plot_brightness()])
         self.analyzer_menu.add_command(label="Settings...",
                                        command=self.show_analyzer_menu)
@@ -232,6 +242,7 @@ class ImageViewer(tk.Tk):
         self.history = src.history.PointsList()
         self.graph_analyzer = src.graph_analyzer.GraphAnalyzer()
         self.settings = src.settings.Settings()
+        self.hide_lines = False
 
         self.brightness_canvas = None
         self.graph = None
@@ -348,7 +359,7 @@ class ImageViewer(tk.Tk):
         )
         if file_path:
             try:
-                image.save(file_path, "I;16")
+                image.save(file_path)
                 messagebox.showinfo("Success", "Image saved at"
                                                f"\n{file_path}\n"
                                                "successfully.")
@@ -356,16 +367,42 @@ class ImageViewer(tk.Tk):
                 messagebox.showerror("Error", "An error occurred while saving:"
                                               f"\n{str(e)}")
 
+    def save_all(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")])
+
+        curr_tmp = self.image_list.curr_id
+        self.image_list.init()
+        image_list = []
+
+        try:
+            while not self.image_list.curr_at_tail():
+                self.image_list.next()
+                self._draw()
+                image_list.append(self.curr_image[0])
+
+            image_list[0].save(file_path, save_all=True,
+                               append_images=image_list[1:])
+            messagebox.showinfo("Success", "Graphs saved successfully.")
+
+        except OSError as e:
+            messagebox.showerror(
+                "Error", f"An error occurred while saving graphs:\n{str(e)}")
+
+        self.image_list.goto(curr_tmp)
+        self._draw()
+
     def save_graphs(self):
         self.searching += 1
         self._config_button()
 
-        if not os.path.exists('saves'): os.mkdir('saves')
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")])
 
         try:
-            with (PdfPages('saves/graph '
-                           f'{datetime.now().strftime("%Y%m%d %H%M%S")}.pdf')
-                  as pdf):
+            with PdfPages(file_path) as pdf:
                 for i, image in enumerate(self.image_list):
                     plt.figure()
 
@@ -384,11 +421,13 @@ class ImageViewer(tk.Tk):
 
                     pdf.savefig()
                     plt.close()
-        except RuntimeError as e:
+
+            messagebox.showinfo("Success", "Graphs saved successfully.")
+
+        except (OSError, RuntimeError) as e:
             messagebox.showerror(
                 "Error", f"An error occurred while saving graphs:\n{str(e)}")
 
-        messagebox.showinfo("Success", "Graphs saved successfully.")
         self.searching -= 1
         self._config_button()
 
@@ -432,7 +471,7 @@ class ImageViewer(tk.Tk):
         slider_win.title("Adjust value")
         tk.Label(slider_win, text="Moving Average:").pack()
         tk.Label(slider_win, text="Window size:").pack()
-        slider = tk.Scale(slider_win, from_=0, to=50, orient='horizontal',
+        slider = tk.Scale(slider_win, from_=1, to=50, orient='horizontal',
                           command=lambda _: [
                               setattr(self.graph_analyzer, "window_size",
                                       slider.get()), self._plot_brightness()])
@@ -503,6 +542,7 @@ class ImageViewer(tk.Tk):
         self._config_button()
 
         self.graph_analyzer.last = None
+        self.hide_lines = False
 
         if self.searching:
             threading.Thread(
@@ -614,20 +654,21 @@ class ImageViewer(tk.Tk):
         # Add color
         data = (get_cmap('viridis')(data)[:, :, :3] * 255).astype(np.uint8)
 
-        for circle in self.history.get_circles():
-            cv2.circle(data, circle, self.settings.circle_radius,
-                       self.settings.circle_color, -1)
+        if not self.hide_lines:
+            for circle in self.history.get_circles():
+                cv2.circle(data, circle, self.settings.circle_radius,
+                           self.settings.circle_color, -1)
 
-        cv2.polylines(data, self.history.get_lines(), False,
-                      self.settings.line_color,
-                      self.settings.line_thickness)
+            cv2.polylines(data, self.history.get_lines(), False,
+                          self.settings.line_color,
+                          self.settings.line_thickness)
 
         # draw pointer to wavefront
         line = [p for l in self.history.get_lines() for p in l][::-1]
         dist = self._get_wavefront()
         if line and dist:
             x, y = line[dist]
-            length = 10 * self.settings.line_thickness
+            length = 10
 
             cv2.rectangle(data, (x - length // 2, y - length // 2),
                           (x + length // 2, y + length // 2),
